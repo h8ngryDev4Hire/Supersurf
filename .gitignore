@@ -1,0 +1,34 @@
+# Reference project — not used at runtime
+blueprint-mcp/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lock files (regenerated on install)
+package-lock.json
+
+# IDE
+.vscode/
+.idea/
+
+# Debug / temp
+tmp/

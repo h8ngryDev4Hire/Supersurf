@@ -1,0 +1,35 @@
+{
+  "name": "@supersurf/server",
+  "version": "0.1.0",
+  "description": "MCP server for SuperSurf browser automation",
+  "main": "dist/cli.js",
+  "bin": {
+    "supersurf": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc",
+    "dev": "npx tsx src/cli.ts --debug",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "commander": "^14.0.1",
+    "env-paths": "^2.2.1",
+    "image-size": "^2.0.2",
+    "jsonpath-plus": "^10.3.0",
+    "sharp": "^0.34.4",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^4.0.18"
+  }
+}

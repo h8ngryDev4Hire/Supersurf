@@ -1,0 +1,18 @@
+{
+  "name": "supersurf",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP browser automation for autonomous AI agents",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build:server": "cd server && npm run build",
+    "build:extension": "cd extension && npm run build",
+    "build": "npm run build:server && npm run build:extension",
+    "dev:server": "cd server && npx tsx src/cli.ts --debug",
+    "test:server": "cd server && npm test",
+    "test:extension": "cd extension && npm test",
+    "test": "npm run test:server && npm run test:extension",
+    "mcp": "claude mcp add supersurf -- node server/dist/cli.js",
+    "start": "chromium --load-extension=./extension --user-data-dir=/tmp/supersurf-profile"
+  }
+}
