@@ -1,21 +1,14 @@
 /**
- * Stateful Backend — manages connection lifecycle
+ * ConnectionManager — manages connection lifecycle.
  * States: passive → active → connected
- *
- * Adapted from Blueprint MCP (Apache 2.0) — stripped of PRO/proxy/OAuth
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { ExtensionServer } from './extensionServer';
-import { DirectTransport, Transport } from './transport';
-import { getLogger } from './logger';
+import { ExtensionServer } from './bridge';
+import { createLog } from './logger';
 import { experimentRegistry } from './experimental/index';
 
-function debugLog(...args: unknown[]): void {
-  if ((global as any).DEBUG_MODE) {
-    console.error(...args);
-  }
-}
+const log = createLog('[Conn]');
 
 export interface BackendConfig {
   debug: boolean;
@@ -40,56 +33,56 @@ interface ToolSchema {
   annotations?: Record<string, unknown>;
 }
 
-// Forward-declare UnifiedBackend import (lazy to avoid circular deps)
-let UnifiedBackend: any = null;
+// Forward-declare BrowserBridge import (lazy to avoid circular deps)
+let BrowserBridge: any = null;
 
-async function getUnifiedBackend(): Promise<any> {
-  if (!UnifiedBackend) {
+async function getBrowserBridge(): Promise<any> {
+  if (!BrowserBridge) {
     const mod = await import('./tools');
-    UnifiedBackend = mod.UnifiedBackend;
+    BrowserBridge = mod.BrowserBridge;
   }
-  return UnifiedBackend;
+  return BrowserBridge;
 }
 
-export class StatefulBackend {
-  private _config: BackendConfig;
-  private _state: BackendState = 'passive';
-  private _activeBackend: any = null;
-  private _extensionServer: ExtensionServer | null = null;
-  private _debugMode: boolean;
-  private _clientId: string | null = null;
-  private _connectedBrowserName: string | null = null;
-  private _attachedTab: TabInfo | null = null;
-  private _stealthMode: boolean = false;
-  private _server: Server | null = null;
-  private _clientInfo: Record<string, unknown> = {};
+export class ConnectionManager {
+  private config: BackendConfig;
+  private state: BackendState = 'passive';
+  private bridge: any = null;
+  private extensionServer: ExtensionServer | null = null;
+  private debugMode: boolean;
+  private clientId: string | null = null;
+  private connectedBrowserName: string | null = null;
+  attachedTab: TabInfo | null = null;
+  private stealthMode: boolean = false;
+  private server: Server | null = null;
+  private clientInfo: Record<string, unknown> = {};
 
   constructor(config: BackendConfig) {
-    debugLog('[StatefulBackend] Constructor — starting in PASSIVE mode');
-    this._config = config;
-    this._debugMode = config.debug || false;
+    log('Constructor — starting in PASSIVE mode');
+    this.config = config;
+    this.debugMode = config.debug || false;
   }
 
   async initialize(server: Server | null, clientInfo: Record<string, unknown>): Promise<void> {
-    debugLog('[StatefulBackend] Initialize called — staying in passive mode');
-    this._server = server;
-    this._clientInfo = clientInfo;
+    log('Initialize called — staying in passive mode');
+    this.server = server;
+    this.clientInfo = clientInfo;
   }
 
   // --- Status header (1-liner prepended to all responses) ---
 
-  _getStatusHeader(): string {
-    const version = this._config.server.version;
+  statusHeader(): string {
+    const version = this.config.server.version;
 
-    if (this._state === 'passive') {
+    if (this.state === 'passive') {
       return `🔴 v${version} | Disabled\n---\n\n`;
     }
 
     const parts: string[] = [];
 
     let buildTime: string | null = null;
-    if (this._extensionServer) {
-      buildTime = this._extensionServer.getBuildTimestamp();
+    if (this.extensionServer) {
+      buildTime = this.extensionServer.buildTime;
       if (buildTime) {
         try {
           const date = new Date(buildTime);
@@ -101,20 +94,20 @@ export class StatefulBackend {
     }
 
     const versionStr =
-      buildTime && this._debugMode ? `v${version} [${buildTime}]` : `v${version}`;
+      buildTime && this.debugMode ? `v${version} [${buildTime}]` : `v${version}`;
     parts.push(`✅ ${versionStr}`);
 
-    if (this._connectedBrowserName) {
-      parts.push(`🌐 ${this._connectedBrowserName}`);
+    if (this.connectedBrowserName) {
+      parts.push(`🌐 ${this.connectedBrowserName}`);
     }
 
-    if (this._attachedTab) {
-      const url = this._attachedTab.url || 'about:blank';
+    if (this.attachedTab) {
+      const url = this.attachedTab.url || 'about:blank';
       const shortUrl = url.length > 50 ? url.substring(0, 47) + '...' : url;
-      parts.push(`📄 Tab ${this._attachedTab.index}: ${shortUrl}`);
+      parts.push(`📄 Tab ${this.attachedTab.index}: ${shortUrl}`);
 
-      if (this._attachedTab.techStack) {
-        const tech = this._attachedTab.techStack;
+      if (this.attachedTab.techStack) {
+        const tech = this.attachedTab.techStack;
         const techParts: string[] = [];
         if (tech.frameworks?.length) techParts.push(tech.frameworks.join(', '));
         if (tech.libraries?.length) techParts.push(tech.libraries.join(', '));
@@ -126,7 +119,7 @@ export class StatefulBackend {
       parts.push(`⚠️ No tab attached`);
     }
 
-    if (this._stealthMode) {
+    if (this.stealthMode) {
       parts.push(`🕵️ Stealth`);
     }
 
@@ -136,13 +129,13 @@ export class StatefulBackend {
   // --- Tool listing ---
 
   async listTools(): Promise<ToolSchema[]> {
-    debugLog(`[StatefulBackend] listTools() — state: ${this._state}`);
+    log(`listTools() — state: ${this.state}`);
 
     const connectionTools: ToolSchema[] = [
       {
         name: 'enable',
         description:
-          'Enable browser automation. Starts the WebSocket server for the extension to connect. Provide a client_id for connection tracking.',
+          'Start browser automation. Spins up the WebSocket server and waits for the extension to connect. Pass a client_id to identify this session.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -164,7 +157,7 @@ export class StatefulBackend {
       {
         name: 'disable',
         description:
-          'Disable browser automation and return to passive mode. Closes browser extension connection.',
+          'Stop browser automation. Tears down the WebSocket connection and returns to passive mode.',
         inputSchema: { type: 'object', properties: {}, required: [] },
         annotations: {
           title: 'Disable browser automation',
@@ -176,7 +169,7 @@ export class StatefulBackend {
       {
         name: 'status',
         description:
-          'Check current state: passive (not connected) or active/connected (browser automation enabled).',
+          'Show current connection state: passive (idle), active (server up), or connected (extension linked).',
         inputSchema: { type: 'object', properties: {}, required: [] },
         annotations: {
           title: 'Connection status',
@@ -188,9 +181,9 @@ export class StatefulBackend {
       {
         name: 'experimental_features',
         description:
-          'Enable or disable experimental features for this session. Available experiments:\n' +
-          '- **page_diffing**: After browser_interact actions, returns only DOM changes (added/removed text, element count delta) instead of requiring a full re-read. Includes a confidence score that drops for shadow DOM-heavy or iframe-heavy pages.\n' +
-          '- **smart_waiting**: Replaces hardcoded 1500ms navigation delays with adaptive waiting (DOM stability + network idle detection). Typically faster on simple pages, same timeout ceiling on complex ones.',
+          'Toggle experimental features for this session. Available experiments:\n' +
+          '- **page_diffing**: After browser_interact, returns only DOM changes instead of requiring a full re-read. Includes a confidence score.\n' +
+          '- **smart_waiting**: Replaces fixed navigation delays with adaptive DOM stability + network idle detection.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -207,18 +200,18 @@ export class StatefulBackend {
       },
     ];
 
-    // Get browser tools from UnifiedBackend (dummy transport, schema only)
-    const UB = await getUnifiedBackend();
-    const dummyBackend = new UB(this._config, null);
-    const browserTools = await dummyBackend.listTools();
+    // Get browser tools from BrowserBridge (dummy transport, schema only)
+    const BB = await getBrowserBridge();
+    const dummyBridge = new BB(this.config, null);
+    const browserTools = await dummyBridge.listTools();
 
     // Debug tools
     const debugTools: ToolSchema[] = [];
-    if (this._debugMode) {
+    if (this.debugMode) {
       debugTools.push({
         name: 'reload_mcp',
         description:
-          'Reload the MCP server without disconnecting. Debug mode only. Server exits with code 42, wrapper restarts it.',
+          'Hot-reload the MCP server. Debug mode only. Server exits with code 42 and the wrapper restarts it.',
         inputSchema: { type: 'object', properties: {}, required: [] },
         annotations: {
           title: 'Reload MCP server',
@@ -239,23 +232,23 @@ export class StatefulBackend {
     rawArguments: Record<string, unknown> = {},
     options: { rawResult?: boolean } = {}
   ): Promise<any> {
-    debugLog(`[StatefulBackend] callTool(${name}) — state: ${this._state}`);
+    log(`callTool(${name}) — state: ${this.state}`);
 
     switch (name) {
       case 'enable':
-        return await this._handleEnable(rawArguments, options);
+        return await this.onEnable(rawArguments, options);
       case 'disable':
-        return await this._handleDisable(options);
+        return await this.onDisable(options);
       case 'status':
-        return await this._handleStatus(options);
+        return await this.onStatus(options);
       case 'experimental_features':
-        return await this._handleExperimentalFeatures(rawArguments, options);
+        return await this.onExperimentalFeatures(rawArguments, options);
       case 'reload_mcp':
-        return this._handleReloadMCP(options);
+        return this.onReloadMCP(options);
     }
 
-    // Forward to active backend
-    if (!this._activeBackend) {
+    // Forward to active bridge
+    if (!this.bridge) {
       if (options.rawResult) {
         return {
           success: false,
@@ -274,12 +267,12 @@ export class StatefulBackend {
       };
     }
 
-    return await this._activeBackend.callTool(name, rawArguments, options);
+    return await this.bridge.callTool(name, rawArguments, options);
   }
 
   // --- Enable ---
 
-  private async _handleEnable(
+  private async onEnable(
     args: Record<string, unknown> = {},
     options: { rawResult?: boolean } = {}
   ): Promise<any> {
@@ -302,14 +295,14 @@ export class StatefulBackend {
       };
     }
 
-    if (this._state !== 'passive') {
+    if (this.state !== 'passive') {
       if (options.rawResult) {
         return {
           success: true,
           already_enabled: true,
-          state: this._state,
-          browser: this._connectedBrowserName,
-          client_id: this._clientId,
+          state: this.state,
+          browser: this.connectedBrowserName,
+          client_id: this.clientId,
         };
       }
       return {
@@ -317,46 +310,46 @@ export class StatefulBackend {
           {
             type: 'text',
             text:
-              this._getStatusHeader() +
-              `### ✅ Already Enabled\n\n**State:** ${this._state}\n**Client ID:** ${this._clientId}\n\nTo restart, call \`disable\` first.`,
+              this.statusHeader() +
+              `### ✅ Already Enabled\n\n**State:** ${this.state}\n**Client ID:** ${this.clientId}\n\nTo restart, call \`disable\` first.`,
           },
         ],
       };
     }
 
-    this._clientId = (args.client_id as string).trim();
-    debugLog('[StatefulBackend] Client ID set to:', this._clientId);
+    this.clientId = (args.client_id as string).trim();
+    log('Client ID set to:', this.clientId);
 
     try {
-      debugLog('[StatefulBackend] Starting extension server...');
+      log('Starting extension server...');
 
-      const port = this._config.port || 5555;
-      this._extensionServer = new ExtensionServer(port, '127.0.0.1');
-      await this._extensionServer.start();
+      const port = this.config.port || 5555;
+      this.extensionServer = new ExtensionServer(port, '127.0.0.1');
+      await this.extensionServer.start();
 
-      if (this._clientId) {
-        this._extensionServer.setClientId(this._clientId);
+      if (this.clientId) {
+        this.extensionServer.notifyClientId(this.clientId);
       }
 
       // Handle extension reconnections
-      this._extensionServer.onReconnect = () => {
-        debugLog('[StatefulBackend] Extension reconnected, resetting tab state...');
-        this._attachedTab = null;
-        if (this._clientId) {
-          this._extensionServer!.setClientId(this._clientId);
+      this.extensionServer.onReconnect = () => {
+        log('Extension reconnected, resetting tab state...');
+        this.attachedTab = null;
+        if (this.clientId) {
+          this.extensionServer!.notifyClientId(this.clientId);
         }
       };
 
       // Monitor tab info updates
-      this._extensionServer.onTabInfoUpdate = (tabInfo: any) => {
-        debugLog('[StatefulBackend] Tab info update:', tabInfo);
+      this.extensionServer.onTabInfoUpdate = (tabInfo: any) => {
+        log('Tab info update:', tabInfo);
         if (tabInfo === null) {
-          this._attachedTab = null;
+          this.attachedTab = null;
           return;
         }
-        if (this._attachedTab) {
-          this._attachedTab = {
-            ...this._attachedTab,
+        if (this.attachedTab) {
+          this.attachedTab = {
+            ...this.attachedTab,
             id: tabInfo.id,
             title: tabInfo.title,
             url: tabInfo.url,
@@ -366,27 +359,25 @@ export class StatefulBackend {
         }
       };
 
-      const transport = new DirectTransport(this._extensionServer);
+      const BB = await getBrowserBridge();
+      this.bridge = new BB(this.config, this.extensionServer);
+      await this.bridge.initialize(this.server, this.clientInfo, this);
 
-      const UB = await getUnifiedBackend();
-      this._activeBackend = new UB(this._config, transport);
-      await this._activeBackend.initialize(this._server, this._clientInfo, this);
-
-      this._state = 'active';
-      this._connectedBrowserName = 'Local Browser';
+      this.state = 'active';
+      this.connectedBrowserName = 'Local Browser';
 
       // Notify MCP client that tool list changed
-      this._notifyToolsListChanged().catch((err: any) =>
-        debugLog('[StatefulBackend] Error sending notification:', err)
+      this.notifyToolsListChanged().catch((err: any) =>
+        log('Error sending notification:', err)
       );
 
       if (options.rawResult) {
         return {
           success: true,
-          state: this._state,
-          browser: this._connectedBrowserName,
-          client_id: this._clientId,
-          port: this._config.port || 5555,
+          state: this.state,
+          browser: this.connectedBrowserName,
+          client_id: this.clientId,
+          port: this.config.port || 5555,
         };
       }
 
@@ -395,7 +386,7 @@ export class StatefulBackend {
           {
             type: 'text',
             text:
-              this._getStatusHeader() +
+              this.statusHeader() +
               `### ✅ Browser Automation Activated!\n\n` +
               `**State:** Active (waiting for extension)\n` +
               `**Port:** ${port}\n\n` +
@@ -407,11 +398,11 @@ export class StatefulBackend {
         ],
       };
     } catch (error: any) {
-      debugLog('[StatefulBackend] Failed to start:', error);
-      this._activeBackend = null;
-      this._state = 'passive';
+      log('Failed to start:', error);
+      this.bridge = null;
+      this.state = 'passive';
 
-      const port = this._config.port || 5555;
+      const port = this.config.port || 5555;
       const isPortError =
         error.message &&
         (error.message.includes('EADDRINUSE') || error.message.includes('address already in use'));
@@ -435,8 +426,8 @@ export class StatefulBackend {
 
   // --- Disable ---
 
-  private async _handleDisable(options: { rawResult?: boolean } = {}): Promise<any> {
-    if (this._state === 'passive') {
+  private async onDisable(options: { rawResult?: boolean } = {}): Promise<any> {
+    if (this.state === 'passive') {
       if (options.rawResult) {
         return { success: true, already_disabled: true, state: 'passive' };
       }
@@ -445,32 +436,32 @@ export class StatefulBackend {
           {
             type: 'text',
             text:
-              this._getStatusHeader() +
+              this.statusHeader() +
               `### Already Disabled\n\nCall \`enable\` to activate.`,
           },
         ],
       };
     }
 
-    debugLog('[StatefulBackend] Disconnecting...');
+    log('Disconnecting...');
 
-    if (this._activeBackend) {
-      this._activeBackend.serverClosed();
-      this._activeBackend = null;
+    if (this.bridge) {
+      this.bridge.serverClosed();
+      this.bridge = null;
     }
 
-    if (this._extensionServer) {
-      await this._extensionServer.stop();
-      this._extensionServer = null;
+    if (this.extensionServer) {
+      await this.extensionServer.stop();
+      this.extensionServer = null;
     }
 
-    this._state = 'passive';
-    this._connectedBrowserName = null;
-    this._attachedTab = null;
+    this.state = 'passive';
+    this.connectedBrowserName = null;
+    this.attachedTab = null;
     experimentRegistry.reset();
 
-    this._notifyToolsListChanged().catch((err: any) =>
-      debugLog('[StatefulBackend] Error sending notification:', err)
+    this.notifyToolsListChanged().catch((err: any) =>
+      log('Error sending notification:', err)
     );
 
     if (options.rawResult) {
@@ -482,7 +473,7 @@ export class StatefulBackend {
         {
           type: 'text',
           text:
-            this._getStatusHeader() +
+            this.statusHeader() +
             `### ✅ Disabled\n\nBrowser automation deactivated. Call \`enable\` to reactivate.`,
         },
       ],
@@ -491,16 +482,16 @@ export class StatefulBackend {
 
   // --- Status ---
 
-  private async _handleStatus(options: { rawResult?: boolean } = {}): Promise<any> {
+  private async onStatus(options: { rawResult?: boolean } = {}): Promise<any> {
     const statusData = {
-      state: this._state,
-      browser: this._connectedBrowserName,
-      client_id: this._clientId,
-      attached_tab: this._attachedTab
+      state: this.state,
+      browser: this.connectedBrowserName,
+      client_id: this.clientId,
+      attached_tab: this.attachedTab
         ? {
-            index: this._attachedTab.index,
-            title: this._attachedTab.title,
-            url: this._attachedTab.url,
+            index: this.attachedTab.index,
+            title: this.attachedTab.title,
+            url: this.attachedTab.url,
           }
         : null,
     };
@@ -509,13 +500,13 @@ export class StatefulBackend {
       return statusData;
     }
 
-    if (this._state === 'passive') {
+    if (this.state === 'passive') {
       return {
         content: [
           {
             type: 'text',
             text:
-              this._getStatusHeader() +
+              this.statusHeader() +
               `### ❌ Disabled\n\nBrowser automation is not active. Call \`enable\` to activate.`,
           },
         ],
@@ -523,26 +514,26 @@ export class StatefulBackend {
     }
 
     let statusText = `### ✅ Enabled\n\n`;
-    if (this._connectedBrowserName) {
-      statusText += `**Browser:** ${this._connectedBrowserName}\n`;
+    if (this.connectedBrowserName) {
+      statusText += `**Browser:** ${this.connectedBrowserName}\n`;
     }
 
-    if (this._attachedTab) {
-      statusText += `**Tab:** #${this._attachedTab.index} — ${this._attachedTab.title || 'Untitled'}\n`;
-      statusText += `**URL:** ${this._attachedTab.url || 'N/A'}\n\n`;
+    if (this.attachedTab) {
+      statusText += `**Tab:** #${this.attachedTab.index} — ${this.attachedTab.title || 'Untitled'}\n`;
+      statusText += `**URL:** ${this.attachedTab.url || 'N/A'}\n\n`;
       statusText += `✅ Ready for automation!`;
     } else {
       statusText += `\n⚠️ No tab attached. Use \`browser_tabs action='attach' index=N\`.`;
     }
 
     return {
-      content: [{ type: 'text', text: this._getStatusHeader() + statusText }],
+      content: [{ type: 'text', text: this.statusHeader() + statusText }],
     };
   }
 
   // --- Experimental Features ---
 
-  private async _handleExperimentalFeatures(
+  private async onExperimentalFeatures(
     args: Record<string, unknown> = {},
     options: { rawResult?: boolean } = {}
   ): Promise<any> {
@@ -557,7 +548,7 @@ export class StatefulBackend {
       return {
         content: [{
           type: 'text',
-          text: this._getStatusHeader() +
+          text: this.statusHeader() +
             `### Experimental Features\n\n` +
             Object.entries(states).map(([k, v]) => `- **${k}**: ${v ? 'enabled' : 'disabled'}`).join('\n') +
             `\n\nPass \`{ "feature_name": true/false }\` to toggle.`,
@@ -580,7 +571,7 @@ export class StatefulBackend {
     return {
       content: [{
         type: 'text',
-        text: this._getStatusHeader() +
+        text: this.statusHeader() +
           `### Experimental Features Updated\n\n` +
           Object.entries(states).map(([k, v]) => `- **${k}**: ${v ? 'enabled' : 'disabled'}`).join('\n'),
       }],
@@ -589,8 +580,8 @@ export class StatefulBackend {
 
   // --- Reload (debug) ---
 
-  private _handleReloadMCP(options: { rawResult?: boolean } = {}): any {
-    if (!this._debugMode) {
+  private onReloadMCP(options: { rawResult?: boolean } = {}): any {
+    if (!this.debugMode) {
       return {
         content: [{ type: 'text', text: 'reload_mcp only available in debug mode.' }],
         isError: true,
@@ -610,49 +601,53 @@ export class StatefulBackend {
 
   // --- Notify tools changed ---
 
-  private async _notifyToolsListChanged(): Promise<void> {
-    if (this._server) {
+  private async notifyToolsListChanged(): Promise<void> {
+    if (this.server) {
       try {
-        await (this._server as any).sendToolsListChanged?.();
+        await (this.server as any).sendToolsListChanged?.();
       } catch {
         // Client may not support this notification
       }
     }
   }
 
-  // --- Public accessors for UnifiedBackend to update state ---
+  // --- Public accessors for BrowserBridge to update state ---
 
   setAttachedTab(tab: TabInfo | null): void {
-    this._attachedTab = tab;
+    this.attachedTab = tab;
   }
 
   getAttachedTab(): TabInfo | null {
-    return this._attachedTab;
+    return this.attachedTab;
+  }
+
+  clearAttachedTab(): void {
+    this.attachedTab = null;
   }
 
   setConnectedBrowserName(name: string): void {
-    this._connectedBrowserName = name;
+    this.connectedBrowserName = name;
   }
 
   setStealthMode(enabled: boolean): void {
-    this._stealthMode = enabled;
+    this.stealthMode = enabled;
   }
 
   // --- Shutdown ---
 
   async serverClosed(): Promise<void> {
-    debugLog('[StatefulBackend] Server closed');
+    log('Server closed');
 
-    if (this._activeBackend) {
-      this._activeBackend.serverClosed();
-      this._activeBackend = null;
+    if (this.bridge) {
+      this.bridge.serverClosed();
+      this.bridge = null;
     }
 
-    if (this._extensionServer) {
-      await this._extensionServer.stop();
-      this._extensionServer = null;
+    if (this.extensionServer) {
+      await this.extensionServer.stop();
+      this.extensionServer = null;
     }
 
-    this._state = 'passive';
+    this.state = 'passive';
   }
 }

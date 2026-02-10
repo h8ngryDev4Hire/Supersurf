@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Readable, Writable } from 'stream';
+import { Readable } from 'stream';
 
 // Mock the logger
 vi.mock('../src/logger', () => ({
@@ -8,33 +8,37 @@ vi.mock('../src/logger', () => ({
     enable: vi.fn(),
     disable: vi.fn(),
   }),
+  createLog: () => (..._args: unknown[]) => {},
 }));
 
-// Mock ExtensionServer
-vi.mock('../src/extensionServer', () => ({
+// Mock ExtensionServer (bridge)
+vi.mock('../src/bridge', () => ({
   ExtensionServer: vi.fn(() => ({
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
-    setClientId: vi.fn(),
-    isConnected: vi.fn().mockReturnValue(false),
-    getBuildTimestamp: vi.fn().mockReturnValue(null),
+    notifyClientId: vi.fn(),
+    connected: false,
+    buildTime: null,
+    browser: 'chrome',
     onReconnect: null,
     onTabInfoUpdate: null,
   })),
 }));
 
-// Mock transport
-vi.mock('../src/transport', () => ({
-  Transport: class {},
-  DirectTransport: vi.fn(() => ({
-    sendCommand: vi.fn(),
-    close: vi.fn(),
-  })),
+// Mock experimental registry
+vi.mock('../src/experimental/index', () => ({
+  experimentRegistry: {
+    listAvailable: vi.fn().mockReturnValue(['page_diffing', 'smart_waiting']),
+    enable: vi.fn(),
+    disable: vi.fn(),
+    reset: vi.fn(),
+    getStates: vi.fn().mockReturnValue({ page_diffing: false, smart_waiting: false }),
+  },
 }));
 
 // Mock tools
 vi.mock('../src/tools', () => ({
-  UnifiedBackend: vi.fn(() => ({
+  BrowserBridge: vi.fn(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
     listTools: vi.fn().mockResolvedValue([]),
     callTool: vi.fn().mockResolvedValue({ success: true }),
@@ -45,13 +49,9 @@ vi.mock('../src/tools', () => ({
 /**
  * Since startScriptMode sets up readline on process.stdin and writes to stdout,
  * we test it by injecting lines and capturing output.
- *
- * Strategy: create a fake stdin (Readable), capture console.log output,
- * then import and call startScriptMode.
  */
-describe('scriptMode', () => {
+describe('stdio (script mode)', () => {
   let originalStdin: typeof process.stdin;
-  let originalStdout: typeof process.stdout;
   let fakeStdin: Readable;
   let capturedOutput: string[];
   let originalConsoleLog: typeof console.log;
@@ -77,17 +77,14 @@ describe('scriptMode', () => {
    * Helper to start script mode with a fake stdin and push lines into it.
    */
   async function runWithInput(lines: string[]): Promise<string[]> {
-    // Create a readable stream that we control
     fakeStdin = new Readable({
       read() {},
     });
 
-    // Temporarily replace stdin
     originalStdin = process.stdin;
     Object.defineProperty(process, 'stdin', { value: fakeStdin, configurable: true });
 
-    // Dynamically import to get fresh module
-    const { startScriptMode } = await import('../src/scriptMode');
+    const { startScriptMode } = await import('../src/stdio');
 
     const startPromise = startScriptMode({
       debug: false,
@@ -95,21 +92,16 @@ describe('scriptMode', () => {
       server: { name: 'supersurf', version: '0.1.0' },
     });
 
-    // Push lines one at a time
     for (const line of lines) {
       fakeStdin.push(line + '\n');
     }
 
-    // Wait for processing
     await new Promise((r) => setTimeout(r, 200));
 
-    // Signal end of input
     fakeStdin.push(null);
 
-    // Wait for close handler
     await new Promise((r) => setTimeout(r, 100));
 
-    // Restore stdin
     Object.defineProperty(process, 'stdin', { value: originalStdin, configurable: true });
 
     return capturedOutput;
@@ -174,7 +166,6 @@ describe('scriptMode', () => {
   it('empty lines are ignored', async () => {
     const output = await runWithInput(['', '   ', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'status' })]);
 
-    // Only the actual request should produce output
     const validOutputs = output.filter((o) => {
       try {
         JSON.parse(o);

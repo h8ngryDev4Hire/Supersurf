@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { StatefulBackend, BackendConfig } from '../src/backend';
+import { ConnectionManager, BackendConfig } from '../src/backend';
 
 // ---- Mocks ----
 
@@ -10,39 +10,40 @@ vi.mock('../src/logger', () => ({
     enable: vi.fn(),
     disable: vi.fn(),
   }),
+  createLog: () => (..._args: unknown[]) => {},
 }));
 
-// Mock ExtensionServer
+// Mock experimental registry
+vi.mock('../src/experimental/index', () => ({
+  experimentRegistry: {
+    listAvailable: vi.fn().mockReturnValue(['page_diffing', 'smart_waiting']),
+    enable: vi.fn(),
+    disable: vi.fn(),
+    reset: vi.fn(),
+    getStates: vi.fn().mockReturnValue({ page_diffing: false, smart_waiting: false }),
+  },
+}));
+
+// Mock ExtensionServer (now in bridge.ts)
 const mockExtensionServerInstance = {
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn().mockResolvedValue(undefined),
-  setClientId: vi.fn(),
-  isConnected: vi.fn().mockReturnValue(false),
-  getBuildTimestamp: vi.fn().mockReturnValue(null),
-  getBrowserType: vi.fn().mockReturnValue('chrome'),
+  notifyClientId: vi.fn(),
+  connected: false,
+  buildTime: null as string | null,
+  browser: 'chrome',
   onReconnect: null as (() => void) | null,
   onTabInfoUpdate: null as ((tabInfo: any) => void) | null,
 };
 
-vi.mock('../src/extensionServer', () => ({
+vi.mock('../src/bridge', () => ({
   ExtensionServer: vi.fn(function () {
     return mockExtensionServerInstance;
   }),
 }));
 
-// Mock DirectTransport
-vi.mock('../src/transport', () => ({
-  Transport: class {},
-  DirectTransport: vi.fn(function () {
-    return {
-      sendCommand: vi.fn(),
-      close: vi.fn(),
-    };
-  }),
-}));
-
-// Mock the tools module (lazy import)
-const mockActiveBackendInstance = {
+// Mock the tools module (lazy import) — now BrowserBridge
+const mockBridgeInstance = {
   initialize: vi.fn().mockResolvedValue(undefined),
   listTools: vi.fn().mockResolvedValue([
     { name: 'browser_tabs', description: 'Tab management', inputSchema: { type: 'object' } },
@@ -52,11 +53,10 @@ const mockActiveBackendInstance = {
 };
 
 vi.mock('../src/tools', () => {
-  // Must use a function (not arrow) so it can be called with `new`
-  const MockUnifiedBackend = vi.fn(function (this: any) {
-    Object.assign(this, mockActiveBackendInstance);
+  const MockBrowserBridge = vi.fn(function (this: any) {
+    Object.assign(this, mockBridgeInstance);
   });
-  return { UnifiedBackend: MockUnifiedBackend };
+  return { BrowserBridge: MockBrowserBridge };
 });
 
 // ---- Helpers ----
@@ -78,19 +78,19 @@ function makeMockServer() {
 
 // ---- Tests ----
 
-describe('StatefulBackend', () => {
-  let backend: StatefulBackend;
+describe('ConnectionManager', () => {
+  let backend: ConnectionManager;
 
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset mock state for ExtensionServer instance
     mockExtensionServerInstance.start.mockResolvedValue(undefined);
     mockExtensionServerInstance.stop.mockResolvedValue(undefined);
-    mockExtensionServerInstance.getBuildTimestamp.mockReturnValue(null);
+    mockExtensionServerInstance.buildTime = null;
     mockExtensionServerInstance.onReconnect = null;
     mockExtensionServerInstance.onTabInfoUpdate = null;
 
-    backend = new StatefulBackend(makeConfig());
+    backend = new ConnectionManager(makeConfig());
   });
 
   afterEach(() => {
@@ -106,8 +106,7 @@ describe('StatefulBackend', () => {
     });
 
     it('stores config correctly', async () => {
-      // Verify through status header that version is used
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('v0.1.0');
     });
   });
@@ -120,7 +119,7 @@ describe('StatefulBackend', () => {
       const clientInfo = { name: 'test-client', version: '1.0' };
       await backend.initialize(server, clientInfo);
 
-      // Verify server is stored by enabling then disabling — it should call sendToolsListChanged
+      // Verify server is stored by enabling — it should call sendToolsListChanged
       await backend.callTool('enable', { client_id: 'test' });
       expect(server.sendToolsListChanged).toHaveBeenCalled();
     });
@@ -147,9 +146,9 @@ describe('StatefulBackend', () => {
       expect(mockExtensionServerInstance.start).toHaveBeenCalled();
     });
 
-    it('sets client ID on ExtensionServer', async () => {
+    it('notifies client ID on ExtensionServer', async () => {
       await backend.callTool('enable', { client_id: 'my-project' });
-      expect(mockExtensionServerInstance.setClientId).toHaveBeenCalledWith('my-project');
+      expect(mockExtensionServerInstance.notifyClientId).toHaveBeenCalledWith('my-project');
     });
 
     it('returns error without client_id', async () => {
@@ -185,11 +184,11 @@ describe('StatefulBackend', () => {
       expect(result.content[0].text).toContain('Already Enabled');
     });
 
-    it('initializes UnifiedBackend with correct args', async () => {
-      const { UnifiedBackend } = await import('../src/tools');
+    it('initializes BrowserBridge with correct args', async () => {
+      const { BrowserBridge } = await import('../src/tools');
       await backend.callTool('enable', { client_id: 'test' });
-      expect(UnifiedBackend).toHaveBeenCalled();
-      expect(mockActiveBackendInstance.initialize).toHaveBeenCalled();
+      expect(BrowserBridge).toHaveBeenCalled();
+      expect(mockBridgeInstance.initialize).toHaveBeenCalled();
     });
 
     it('handles start failure gracefully', async () => {
@@ -235,10 +234,10 @@ describe('StatefulBackend', () => {
       expect(mockExtensionServerInstance.stop).toHaveBeenCalled();
     });
 
-    it('calls serverClosed on activeBackend', async () => {
+    it('calls serverClosed on bridge', async () => {
       await backend.callTool('enable', { client_id: 'test' });
       await backend.callTool('disable');
-      expect(mockActiveBackendInstance.serverClosed).toHaveBeenCalled();
+      expect(mockBridgeInstance.serverClosed).toHaveBeenCalled();
     });
 
     it('returns "already disabled" when passive', async () => {
@@ -314,6 +313,40 @@ describe('StatefulBackend', () => {
     });
   });
 
+  // ---- callTool('experimental_features') ----
+
+  describe('callTool("experimental_features")', () => {
+    beforeEach(async () => {
+      await backend.initialize(makeMockServer(), {});
+    });
+
+    it('returns current states when no args', async () => {
+      const result = await backend.callTool('experimental_features', {}, { rawResult: true });
+      expect(result.success).toBe(true);
+      expect(result.experiments).toBeDefined();
+      expect(result.available).toContain('page_diffing');
+      expect(result.available).toContain('smart_waiting');
+    });
+
+    it('enables experiments', async () => {
+      const { experimentRegistry } = await import('../src/experimental/index');
+      await backend.callTool('experimental_features', { page_diffing: true });
+      expect(experimentRegistry.enable).toHaveBeenCalledWith('page_diffing');
+    });
+
+    it('disables experiments', async () => {
+      const { experimentRegistry } = await import('../src/experimental/index');
+      await backend.callTool('experimental_features', { smart_waiting: false });
+      expect(experimentRegistry.disable).toHaveBeenCalledWith('smart_waiting');
+    });
+
+    it('ignores unknown experiment names', async () => {
+      const { experimentRegistry } = await import('../src/experimental/index');
+      await backend.callTool('experimental_features', { unknown_feature: true }, { rawResult: true });
+      expect(experimentRegistry.enable).not.toHaveBeenCalled();
+    });
+  });
+
   // ---- callTool with unknown tool when not active ----
 
   describe('callTool with unknown tool when not active', () => {
@@ -330,7 +363,7 @@ describe('StatefulBackend', () => {
     });
   });
 
-  // ---- callTool with unknown tool when active ----
+  // ---- callTool with browser tool when active ----
 
   describe('callTool with browser tool when active', () => {
     beforeEach(async () => {
@@ -338,9 +371,9 @@ describe('StatefulBackend', () => {
       await backend.callTool('enable', { client_id: 'test' });
     });
 
-    it('forwards to active backend', async () => {
+    it('forwards to bridge', async () => {
       await backend.callTool('browser_tabs', { action: 'list' });
-      expect(mockActiveBackendInstance.callTool).toHaveBeenCalledWith(
+      expect(mockBridgeInstance.callTool).toHaveBeenCalledWith(
         'browser_tabs',
         { action: 'list' },
         {}
@@ -353,7 +386,6 @@ describe('StatefulBackend', () => {
   describe('callTool("reload_mcp")', () => {
     it('returns error when not in debug mode', () => {
       const result = (backend as any).callTool('reload_mcp');
-      // This is synchronous internally, but callTool is async
       return result.then((r: any) => {
         expect(r.isError).toBe(true);
         expect(r.content[0].text).toContain('debug mode');
@@ -361,7 +393,7 @@ describe('StatefulBackend', () => {
     });
 
     it('triggers reload in debug mode', async () => {
-      const debugBackend = new StatefulBackend(makeConfig({ debug: true }));
+      const debugBackend = new ConnectionManager(makeConfig({ debug: true }));
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
       vi.useFakeTimers();
 
@@ -377,7 +409,7 @@ describe('StatefulBackend', () => {
     });
 
     it('returns MCP-formatted reload message in debug mode', async () => {
-      const debugBackend = new StatefulBackend(makeConfig({ debug: true }));
+      const debugBackend = new ConnectionManager(makeConfig({ debug: true }));
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
       vi.useFakeTimers();
 
@@ -390,11 +422,11 @@ describe('StatefulBackend', () => {
     });
   });
 
-  // ---- _getStatusHeader ----
+  // ---- statusHeader ----
 
-  describe('_getStatusHeader()', () => {
+  describe('statusHeader()', () => {
     it('returns correct format for passive state', () => {
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('v0.1.0');
       expect(header).toContain('Disabled');
       expect(header).toContain('---');
@@ -404,7 +436,7 @@ describe('StatefulBackend', () => {
       await backend.initialize(makeMockServer(), {});
       await backend.callTool('enable', { client_id: 'test' });
 
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('v0.1.0');
       expect(header).toContain('No tab attached');
       expect(header).toContain('Local Browser');
@@ -420,7 +452,7 @@ describe('StatefulBackend', () => {
         url: 'https://example.com/page',
       });
 
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('Tab 2');
       expect(header).toContain('https://example.com/page');
     });
@@ -434,7 +466,7 @@ describe('StatefulBackend', () => {
         url: 'https://example.com/very/long/path/that/exceeds/fifty/characters/for/sure',
       });
 
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('...');
     });
 
@@ -452,7 +484,7 @@ describe('StatefulBackend', () => {
         },
       });
 
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('React');
       expect(header).toContain('jQuery');
       expect(header).toContain('Tailwind');
@@ -468,7 +500,7 @@ describe('StatefulBackend', () => {
         techStack: { obfuscatedCSS: true },
       });
 
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('Obfuscated CSS');
     });
 
@@ -477,19 +509,18 @@ describe('StatefulBackend', () => {
       await backend.callTool('enable', { client_id: 'test' });
       backend.setStealthMode(true);
 
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('Stealth');
     });
 
     it('includes build timestamp in debug mode', async () => {
-      const debugBackend = new StatefulBackend(makeConfig({ debug: true }));
+      const debugBackend = new ConnectionManager(makeConfig({ debug: true }));
       await debugBackend.initialize(makeMockServer(), {});
 
-      mockExtensionServerInstance.getBuildTimestamp.mockReturnValue('2026-01-15T10:30:00.000Z');
+      mockExtensionServerInstance.buildTime = '2026-01-15T10:30:00.000Z';
       await debugBackend.callTool('enable', { client_id: 'test' });
 
-      const header = debugBackend._getStatusHeader();
-      // Should contain the formatted time
+      const header = debugBackend.statusHeader();
       expect(header).toContain('[');
       expect(header).toContain(']');
     });
@@ -523,7 +554,7 @@ describe('StatefulBackend', () => {
       await backend.callTool('enable', { client_id: 'test' });
       backend.setConnectedBrowserName('Firefox');
 
-      const header = backend._getStatusHeader();
+      const header = backend.statusHeader();
       expect(header).toContain('Firefox');
     });
   });
@@ -534,10 +565,10 @@ describe('StatefulBackend', () => {
       await backend.callTool('enable', { client_id: 'test' });
 
       backend.setStealthMode(true);
-      expect(backend._getStatusHeader()).toContain('Stealth');
+      expect(backend.statusHeader()).toContain('Stealth');
 
       backend.setStealthMode(false);
-      expect(backend._getStatusHeader()).not.toContain('Stealth');
+      expect(backend.statusHeader()).not.toContain('Stealth');
     });
   });
 
@@ -554,12 +585,12 @@ describe('StatefulBackend', () => {
       expect(status.state).toBe('passive');
     });
 
-    it('calls serverClosed on active backend', async () => {
+    it('calls serverClosed on bridge', async () => {
       await backend.initialize(makeMockServer(), {});
       await backend.callTool('enable', { client_id: 'test' });
 
       await backend.serverClosed();
-      expect(mockActiveBackendInstance.serverClosed).toHaveBeenCalled();
+      expect(mockBridgeInstance.serverClosed).toHaveBeenCalled();
     });
 
     it('stops ExtensionServer', async () => {
@@ -588,7 +619,13 @@ describe('StatefulBackend', () => {
       expect(names).toContain('status');
     });
 
-    it('includes browser tools from UnifiedBackend', async () => {
+    it('includes experimental_features tool', async () => {
+      const tools = await backend.listTools();
+      const names = tools.map((t: any) => t.name);
+      expect(names).toContain('experimental_features');
+    });
+
+    it('includes browser tools from BrowserBridge', async () => {
       const tools = await backend.listTools();
       const names = tools.map((t: any) => t.name);
       expect(names).toContain('browser_tabs');
@@ -601,7 +638,7 @@ describe('StatefulBackend', () => {
     });
 
     it('includes reload_mcp in debug mode', async () => {
-      const debugBackend = new StatefulBackend(makeConfig({ debug: true }));
+      const debugBackend = new ConnectionManager(makeConfig({ debug: true }));
       const tools = await debugBackend.listTools();
       const names = tools.map((t: any) => t.name);
       expect(names).toContain('reload_mcp');

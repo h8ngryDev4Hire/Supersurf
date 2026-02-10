@@ -1,27 +1,21 @@
 /**
- * UnifiedBackend — all browser tool schemas and implementations
+ * BrowserBridge — all browser tool schemas and implementations.
  * Forwards commands to the extension via Transport.
- * Adapted from Blueprint MCP (Apache 2.0)
  */
 
-import { Transport } from './transport';
-import { getLogger } from './logger';
+import type { ExtensionServer } from './bridge';
+import { createLog } from './logger';
 import { experimentRegistry, diffSnapshots, calculateConfidence, formatDiffSection } from './experimental/index';
 import fs from 'fs';
 import sharp from 'sharp';
 import sizeOf from 'image-size';
 
+const log = createLog('[Bridge]');
+
 /** Max pixel dimension for screenshots returned as base64 to the agent.
  *  Images exceeding this in either axis get downscaled via sharp.
  *  Set to 0 to disable auto-downscaling. */
 const SCREENSHOT_MAX_DIMENSION = 2000;
-
-function debugLog(...args: unknown[]): void {
-  if ((global as any).DEBUG_MODE) {
-    const logger = getLogger();
-    logger.log('[UnifiedBackend]', ...args);
-  }
-}
 
 interface ToolSchema {
   name: string;
@@ -48,41 +42,38 @@ const KEY_MAP: Record<string, { key: string; code: string; keyCode: number; text
   PageDown:   { key: 'PageDown',   code: 'PageDown',   keyCode: 34, text: '' },
 };
 
-export class UnifiedBackend {
-  private _config: any;
-  private _transport: Transport | null;
-  private _server: any = null;
-  private _clientInfo: any = {};
-  private _statefulBackend: any = null;
+export class BrowserBridge {
+  private config: any;
+  private ext: ExtensionServer | null;
+  private server: any = null;
+  private clientInfo: any = {};
+  private connectionManager: any = null;
 
-  constructor(config: any, transport: Transport | null) {
-    this._config = config;
-    this._transport = transport;
+  constructor(config: any, ext: ExtensionServer | null) {
+    this.config = config;
+    this.ext = ext;
   }
 
-  async initialize(server: any, clientInfo: any, statefulBackend?: any): Promise<void> {
-    this._server = server;
-    this._clientInfo = clientInfo;
-    this._statefulBackend = statefulBackend;
+  async initialize(server: any, clientInfo: any, connectionManager?: any): Promise<void> {
+    this.server = server;
+    this.clientInfo = clientInfo;
+    this.connectionManager = connectionManager;
   }
 
   serverClosed(): void {
-    debugLog('Server closed');
-    if (this._transport) {
-      this._transport.close();
-    }
+    log('Server closed');
   }
 
   // ─── CDP + Eval Helpers ─────────────────────────────────────
 
   /** Send a CDP command through the extension's forwardCDPCommand handler */
-  private async _cdp(method: string, params: any = {}): Promise<any> {
-    return await this._transport!.sendCommand('forwardCDPCommand', { method, params });
+  private async cdp(method: string, params: any = {}): Promise<any> {
+    return await this.ext!.sendCmd('forwardCDPCommand', { method, params });
   }
 
   /** Evaluate JS expression in page context, return by value */
-  private async _eval(expression: string, awaitPromise = true): Promise<any> {
-    const result = await this._cdp('Runtime.evaluate', {
+  private async eval(expression: string, awaitPromise = true): Promise<any> {
+    const result = await this.cdp('Runtime.evaluate', {
       expression,
       returnByValue: true,
       awaitPromise,
@@ -95,14 +86,14 @@ export class UnifiedBackend {
   }
 
   /** Sleep for specified ms */
-  private _sleep(ms: number): Promise<void> {
+  private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /** Get center coordinates of an element by selector, with "Did you mean?" hints on failure */
-  private async _getElementCenter(selector: string): Promise<{ x: number; y: number }> {
-    const expr = this._getSelectorExpression(selector);
-    const result = await this._eval(`
+  private async getElementCenter(selector: string): Promise<{ x: number; y: number }> {
+    const expr = this.getSelectorExpression(selector);
+    const result = await this.eval(`
       (() => {
         const el = ${expr};
         if (!el) return null;
@@ -114,7 +105,7 @@ export class UnifiedBackend {
       })()
     `);
     if (!result) {
-      const hints = await this._findAlternativeSelectors(selector);
+      const hints = await this.findAlternativeSelectors(selector);
       let msg = `Element not found: \`${selector}\``;
       if (hints && hints.length > 0) {
         msg += '\n\nDid you mean?';
@@ -131,14 +122,14 @@ export class UnifiedBackend {
 
   /** Search for alternative elements when a selector fails.
    *  Extracts text from :has-text() selectors and searches all elements for matches. */
-  private async _findAlternativeSelectors(selector: string): Promise<any[]> {
+  private async findAlternativeSelectors(selector: string): Promise<any[]> {
     // Extract search text from :has-text() selectors
     const m = selector.match(/:has-text\(["'](.+?)["']\)/);
     if (!m) return [];
     const searchText = m[1];
 
     try {
-      const result = await this._eval(`
+      const result = await this.eval(`
         (() => {
           const searchText = ${JSON.stringify(searchText)};
           const searchLower = searchText.trim().toLowerCase();
@@ -186,7 +177,7 @@ export class UnifiedBackend {
   }
 
   /** Convert selector string to JS querySelector expression, handling :has-text() */
-  private _getSelectorExpression(selector: string): string {
+  private getSelectorExpression(selector: string): string {
     const m = selector.match(/^(.+?):has-text\(["'](.+?)["']\)(.*)$/);
     if (m) {
       const [, base, text] = m;
@@ -208,7 +199,7 @@ export class UnifiedBackend {
       {
         name: 'browser_tabs',
         description:
-          'STEP 2 (after enable): Manage browser tabs. List available tabs, create a new tab, attach to an existing tab for automation, or close a tab. You must attach to a tab before using other browser_ tools.',
+          'List, create, attach, or close browser tabs. Attach to a tab before using other browser tools.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -233,7 +224,7 @@ export class UnifiedBackend {
       // ── Navigation ──
       {
         name: 'browser_navigate',
-        description: 'Navigate in the browser — go to URL, back, forward, reload, or open test page.',
+        description: 'Go to a URL, navigate back/forward, or reload the current page.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -253,7 +244,7 @@ export class UnifiedBackend {
       {
         name: 'browser_interact',
         description:
-          'Perform one or more browser interactions in sequence (click, type, press keys, hover, scroll, wait, select option, file upload, force pseudo-states).',
+          'Run a sequence of page interactions: click, type, press keys, hover, scroll, wait, select, upload files, or force pseudo-states.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -305,7 +296,7 @@ export class UnifiedBackend {
       // ── Content: Snapshot ──
       {
         name: 'browser_snapshot',
-        description: 'Get accessible DOM snapshot of the page.',
+        description: 'Return the page\'s accessibility tree as a structured DOM snapshot.',
         inputSchema: { type: 'object', properties: {} },
         annotations: { title: 'DOM snapshot', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       },
@@ -314,7 +305,7 @@ export class UnifiedBackend {
       {
         name: 'browser_lookup',
         description:
-          'Search for elements by text content and return their selectors. Useful for finding the right selector before clicking.',
+          'Find elements by visible text and return their selectors. Use this to locate the right target before clicking.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -330,7 +321,7 @@ export class UnifiedBackend {
       {
         name: 'browser_extract_content',
         description:
-          'Extract page content as clean markdown. Auto-detects main content, full page, or specific selector. Supports pagination.',
+          'Pull page content as clean markdown. Auto-detects the main article, or target a specific selector. Supports pagination via offset.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -351,7 +342,7 @@ export class UnifiedBackend {
       {
         name: 'browser_get_element_styles',
         description:
-          'Get CSS styles for an element, showing matched rules and specificity (like DevTools Styles panel).',
+          'Inspect computed and matched CSS rules for an element, like the DevTools Styles panel. Supports pseudo-state forcing.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -375,7 +366,7 @@ export class UnifiedBackend {
       {
         name: 'browser_take_screenshot',
         description:
-          'Capture screenshot (default: JPEG quality 80, viewport only, 1:1 scale). Supports full page, partial by selector or coordinates.',
+          'Capture a screenshot. Defaults to JPEG quality 80, viewport-only. Options: full page, element crop, coordinate clip, clickable highlights.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -404,7 +395,7 @@ export class UnifiedBackend {
       // ── JavaScript ──
       {
         name: 'browser_evaluate',
-        description: 'Execute JavaScript in the page context.',
+        description: 'Run JavaScript in the page context and return the result.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -418,7 +409,7 @@ export class UnifiedBackend {
       // ── Console ──
       {
         name: 'browser_console_messages',
-        description: 'Get console messages from the page. Supports filtering and pagination.',
+        description: 'Read console output from the page. Filter by level, text, or source URL.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -435,7 +426,7 @@ export class UnifiedBackend {
       // ── Forms ──
       {
         name: 'browser_fill_form',
-        description: 'Fill multiple form fields at once.',
+        description: 'Set values on multiple form fields at once.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -458,7 +449,7 @@ export class UnifiedBackend {
       // ── Drag ──
       {
         name: 'browser_drag',
-        description: 'Drag element to another element.',
+        description: 'Drag one element to another using simulated mouse events.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -473,7 +464,7 @@ export class UnifiedBackend {
       // ── Window ──
       {
         name: 'browser_window',
-        description: 'Manage browser window — resize, close, minimize, or maximize.',
+        description: 'Resize, close, minimize, or maximize the browser window.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -489,7 +480,7 @@ export class UnifiedBackend {
       // ── Verification ──
       {
         name: 'browser_verify_text_visible',
-        description: 'Verify text is visible on page.',
+        description: 'Assert that specific text is visible on the page.',
         inputSchema: {
           type: 'object',
           properties: { text: { type: 'string', description: 'Text to find' } },
@@ -499,7 +490,7 @@ export class UnifiedBackend {
       },
       {
         name: 'browser_verify_element_visible',
-        description: 'Verify element is visible on page.',
+        description: 'Assert that an element matching the selector is visible on the page.',
         inputSchema: {
           type: 'object',
           properties: { selector: { type: 'string' } },
@@ -512,7 +503,7 @@ export class UnifiedBackend {
       {
         name: 'browser_network_requests',
         description:
-          'Network monitoring with list, details, replay, and clear actions. Supports filtering, pagination, and JSONPath.',
+          'Monitor network traffic: list captured requests, inspect details, replay a request, or clear the log. Filter by URL, method, status, or resource type.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -537,7 +528,7 @@ export class UnifiedBackend {
       // ── PDF ──
       {
         name: 'browser_pdf_save',
-        description: 'Save page as PDF to specified file path.',
+        description: 'Export the current page as a PDF file.',
         inputSchema: {
           type: 'object',
           properties: { path: { type: 'string', description: 'File path for PDF output' } },
@@ -548,7 +539,7 @@ export class UnifiedBackend {
       // ── Dialog ──
       {
         name: 'browser_handle_dialog',
-        description: 'Handle alert/confirm/prompt dialog.',
+        description: 'Accept or dismiss a browser dialog (alert, confirm, prompt).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -562,13 +553,13 @@ export class UnifiedBackend {
       // ── Extensions ──
       {
         name: 'browser_list_extensions',
-        description: 'List installed browser extensions.',
+        description: 'List all installed Chrome extensions.',
         inputSchema: { type: 'object', properties: {} },
         annotations: { title: 'List extensions', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       },
       {
         name: 'browser_reload_extensions',
-        description: 'Reload unpacked/development browser extensions.',
+        description: 'Reload an unpacked (developer) extension by name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -581,16 +572,16 @@ export class UnifiedBackend {
       // ── Performance ──
       {
         name: 'browser_performance_metrics',
-        description: 'Get performance metrics — FCP, LCP, CLS, TTFB, and other Web Vitals.',
+        description: 'Collect Web Vitals and CDP performance metrics: FCP, LCP, CLS, TTFB, and more.',
         inputSchema: { type: 'object', properties: {} },
         annotations: { title: 'Performance metrics', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       },
 
-      // ── Secure Fill (new) ──
+      // ── Secure Fill ──
       {
         name: 'secure_fill',
         description:
-          'Securely fill a form field with a credential from an environment variable. The credential value is resolved server-side and never exposed to the agent. Character-by-character typing with random delays.',
+          'Fill a form field with a server-side credential from an environment variable. The value never reaches the agent. Types char-by-char with randomized delays.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -614,10 +605,10 @@ export class UnifiedBackend {
     args: Record<string, unknown> = {},
     options: { rawResult?: boolean } = {}
   ): Promise<any> {
-    debugLog(`callTool(${name})`);
+    log(`callTool(${name})`);
 
-    if (!this._transport) {
-      return this._error(
+    if (!this.ext) {
+      return this.error(
         'Extension not connected.\n\n' +
         '**Troubleshooting:**\n' +
         '1. Ensure the SuperSurf extension is loaded in Chrome (`chrome://extensions`)\n' +
@@ -630,60 +621,60 @@ export class UnifiedBackend {
     try {
       switch (name) {
         case 'browser_tabs':
-          return await this._handleBrowserTabs(args, options);
+          return await this.onBrowserTabs(args, options);
         case 'browser_navigate':
-          return await this._handleNavigate(args, options);
+          return await this.onNavigate(args, options);
         case 'browser_interact':
-          return await this._handleInteract(args, options);
+          return await this.onInteract(args, options);
         case 'browser_snapshot':
-          return await this._handleSnapshot(options);
+          return await this.onSnapshot(options);
         case 'browser_lookup':
-          return await this._handleLookup(args, options);
+          return await this.onLookup(args, options);
         case 'browser_extract_content':
-          return await this._handleExtractContent(args, options);
+          return await this.onExtractContent(args, options);
         case 'browser_get_element_styles':
-          return await this._handleGetElementStyles(args, options);
+          return await this.onGetElementStyles(args, options);
         case 'browser_take_screenshot':
-          return await this._handleScreenshot(args, options);
+          return await this.onScreenshot(args, options);
         case 'browser_evaluate':
-          return await this._handleEvaluate(args, options);
+          return await this.onEvaluate(args, options);
         case 'browser_console_messages':
-          return await this._handleConsoleMessages(args, options);
+          return await this.onConsoleMessages(args, options);
         case 'browser_fill_form':
-          return await this._handleFillForm(args, options);
+          return await this.onFillForm(args, options);
         case 'browser_drag':
-          return await this._handleDrag(args, options);
+          return await this.onDrag(args, options);
         case 'browser_window':
-          return await this._handleWindow(args, options);
+          return await this.onWindow(args, options);
         case 'browser_verify_text_visible':
-          return await this._handleVerifyTextVisible(args, options);
+          return await this.onVerifyTextVisible(args, options);
         case 'browser_verify_element_visible':
-          return await this._handleVerifyElementVisible(args, options);
+          return await this.onVerifyElementVisible(args, options);
         case 'browser_network_requests':
-          return await this._handleNetworkRequests(args, options);
+          return await this.onNetworkRequests(args, options);
         case 'browser_pdf_save':
-          return await this._handlePdfSave(args, options);
+          return await this.onPdfSave(args, options);
         case 'browser_handle_dialog':
-          return await this._handleDialog(args, options);
+          return await this.onDialog(args, options);
         case 'browser_list_extensions':
-          return await this._handleListExtensions(options);
+          return await this.onListExtensions(options);
         case 'browser_reload_extensions':
-          return await this._handleReloadExtensions(args, options);
+          return await this.onReloadExtensions(args, options);
         case 'browser_performance_metrics':
-          return await this._handlePerformanceMetrics(options);
+          return await this.onPerformanceMetrics(options);
         case 'secure_fill':
-          return await this._handleSecureFill(args, options);
+          return await this.onSecureFill(args, options);
         default:
-          return this._error(`Unknown tool: ${name}`, options);
+          return this.error(`Unknown tool: ${name}`, options);
       }
     } catch (error: any) {
-      debugLog(`Tool error (${name}):`, error.message);
+      log(`Tool error (${name}):`, error.message);
       const msg = error.message || String(error);
 
       // Detect CDP/debugger attachment failures that indicate extension conflicts
       if (/debugger|attach|detach|target closed|session/i.test(msg) &&
           /another|conflict|denied|cannot|failed/i.test(msg)) {
-        return this._error(
+        return this.error(
           msg + '\n\n' +
           '**Possible extension conflict.** Another extension may be using the Chrome debugger.\n\n' +
           '**Common culprits:** iCloud Passwords, password managers, or other DevTools extensions.\n' +
@@ -692,109 +683,109 @@ export class UnifiedBackend {
         );
       }
 
-      return this._error(msg, options);
+      return this.error(msg, options);
     }
   }
 
   // ─── Tab Management ─────────────────────────────────────────
 
-  private async _handleBrowserTabs(args: any, options: any): Promise<any> {
+  private async onBrowserTabs(args: any, options: any): Promise<any> {
     const action = args.action as string;
     let result: any;
 
     switch (action) {
       case 'list':
-        result = await this._transport!.sendCommand('getTabs', {});
+        result = await this.ext!.sendCmd('getTabs', {});
         break;
       case 'new':
-        result = await this._transport!.sendCommand('createTab', {
+        result = await this.ext!.sendCmd('createTab', {
           url: args.url,
           activate: args.activate !== false,
         });
         break;
       case 'attach':
-        result = await this._transport!.sendCommand('selectTab', {
+        result = await this.ext!.sendCmd('selectTab', {
           index: args.index,
           stealth: args.stealth,
         });
         break;
       case 'close':
-        result = await this._transport!.sendCommand('closeTab', args.index);
+        result = await this.ext!.sendCmd('closeTab', args.index);
         break;
       default:
-        return this._error(`Unknown tab action: ${action}`, options);
+        return this.error(`Unknown tab action: ${action}`, options);
     }
 
-    if (result && this._statefulBackend) {
+    if (result && this.connectionManager) {
       if (action === 'new' || action === 'attach') {
-        this._statefulBackend.setAttachedTab(result);
-        if (args.stealth) this._statefulBackend.setStealthMode(true);
+        this.connectionManager.setAttachedTab(result);
+        if (args.stealth) this.connectionManager.setStealthMode(true);
       } else if (action === 'close') {
-        this._statefulBackend.clearAttachedTab();
+        this.connectionManager.clearAttachedTab();
       }
     }
 
-    return this._formatResult('browser_tabs', result, options);
+    return this.formatResult('browser_tabs', result, options);
   }
 
   // ─── Navigation ─────────────────────────────────────────────
 
-  private async _handleNavigate(args: any, options: any): Promise<any> {
+  private async onNavigate(args: any, options: any): Promise<any> {
     const action = args.action as string;
     let result: any;
 
     switch (action) {
       case 'url':
-        result = await this._transport!.sendCommand('navigate', { action: 'url', url: args.url });
-        if (this._statefulBackend?._attachedTab) {
-          this._statefulBackend._attachedTab.url = args.url;
+        result = await this.ext!.sendCmd('navigate', { action: 'url', url: args.url });
+        if (this.connectionManager?.attachedTab) {
+          this.connectionManager.attachedTab.url = args.url;
         }
         // === EXPERIMENTAL: smart waiting ===
         if (experimentRegistry.isEnabled('smart_waiting')) {
-          try { await this._transport!.sendCommand('waitForReady', { timeout: 10000 }); }
+          try { await this.ext!.sendCmd('waitForReady', { timeout: 10000 }); }
           catch { /* fall through — page may already be ready */ }
         }
         break;
       case 'back':
-        await this._eval('window.history.back()');
+        await this.eval('window.history.back()');
         // === EXPERIMENTAL: smart waiting ===
         if (experimentRegistry.isEnabled('smart_waiting')) {
-          try { await this._transport!.sendCommand('waitForReady', { timeout: 10000 }); }
-          catch { await this._sleep(1500); }
+          try { await this.ext!.sendCmd('waitForReady', { timeout: 10000 }); }
+          catch { await this.sleep(1500); }
         } else {
-          await this._sleep(1500);
+          await this.sleep(1500);
         }
-        result = { success: true, action: 'back', url: await this._eval('window.location.href') };
+        result = { success: true, action: 'back', url: await this.eval('window.location.href') };
         break;
       case 'forward':
-        await this._eval('window.history.forward()');
+        await this.eval('window.history.forward()');
         // === EXPERIMENTAL: smart waiting ===
         if (experimentRegistry.isEnabled('smart_waiting')) {
-          try { await this._transport!.sendCommand('waitForReady', { timeout: 10000 }); }
-          catch { await this._sleep(1500); }
+          try { await this.ext!.sendCmd('waitForReady', { timeout: 10000 }); }
+          catch { await this.sleep(1500); }
         } else {
-          await this._sleep(1500);
+          await this.sleep(1500);
         }
-        result = { success: true, action: 'forward', url: await this._eval('window.location.href') };
+        result = { success: true, action: 'forward', url: await this.eval('window.location.href') };
         break;
       case 'reload':
-        result = await this._transport!.sendCommand('navigate', { action: 'reload' });
+        result = await this.ext!.sendCmd('navigate', { action: 'reload' });
         // === EXPERIMENTAL: smart waiting ===
         if (experimentRegistry.isEnabled('smart_waiting')) {
-          try { await this._transport!.sendCommand('waitForReady', { timeout: 10000 }); }
+          try { await this.ext!.sendCmd('waitForReady', { timeout: 10000 }); }
           catch { /* fall through */ }
         }
         break;
       default:
-        return this._error(`Unknown navigate action: ${action}`, options);
+        return this.error(`Unknown navigate action: ${action}`, options);
     }
 
-    return this._formatResult('browser_navigate', result, options);
+    return this.formatResult('browser_navigate', result, options);
   }
 
   // ─── Interact ───────────────────────────────────────────────
 
-  private async _handleInteract(args: any, options: any): Promise<any> {
+  private async onInteract(args: any, options: any): Promise<any> {
     const actions = args.actions as any[];
     const onError = (args.onError as string) || 'stop';
     const results: string[] = [];
@@ -802,13 +793,13 @@ export class UnifiedBackend {
     // === EXPERIMENTAL: page diffing — capture before state ===
     let beforeState: any = null;
     if (experimentRegistry.isEnabled('page_diffing')) {
-      try { beforeState = await this._transport!.sendCommand('capturePageState', {}); }
+      try { beforeState = await this.ext!.sendCmd('capturePageState', {}); }
       catch { /* silently skip — extension may not support it yet */ }
     }
 
     for (const action of actions) {
       try {
-        const msg = await this._executeAction(action);
+        const msg = await this.executeAction(action);
         results.push(`✓ ${action.type}: ${msg}`);
       } catch (error: any) {
         results.push(`✗ ${action.type}: ${error.message}`);
@@ -820,7 +811,7 @@ export class UnifiedBackend {
     let diffSection = '';
     if (beforeState) {
       try {
-        const afterState = await this._transport!.sendCommand('capturePageState', {});
+        const afterState = await this.ext!.sendCmd('capturePageState', {});
         const confidence = calculateConfidence(afterState);
         if (confidence >= 0.7) {
           diffSection = formatDiffSection(diffSnapshots(beforeState, afterState), confidence);
@@ -840,18 +831,18 @@ export class UnifiedBackend {
     };
   }
 
-  private async _executeAction(action: any): Promise<string> {
+  private async executeAction(action: any): Promise<string> {
     switch (action.type) {
       case 'click': {
-        const { x, y } = await this._getElementCenter(action.selector);
+        const { x, y } = await this.getElementCenter(action.selector);
         const button = action.button || 'left';
         const clickCount = action.clickCount || 1;
 
-        await this._cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-        await this._cdp('Input.dispatchMouseEvent', {
+        await this.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+        await this.cdp('Input.dispatchMouseEvent', {
           type: 'mousePressed', x, y, button, clickCount, buttons: 1,
         });
-        await this._cdp('Input.dispatchMouseEvent', {
+        await this.cdp('Input.dispatchMouseEvent', {
           type: 'mouseReleased', x, y, button, clickCount,
         });
 
@@ -859,20 +850,20 @@ export class UnifiedBackend {
       }
 
       case 'type': {
-        const expr = this._getSelectorExpression(action.selector);
-        await this._eval(`(() => { const el = ${expr}; if (el) el.focus(); })()`);
+        const expr = this.getSelectorExpression(action.selector);
+        await this.eval(`(() => { const el = ${expr}; if (el) el.focus(); })()`);
 
         for (const char of action.text) {
-          await this._cdp('Input.dispatchKeyEvent', { type: 'char', text: char });
+          await this.cdp('Input.dispatchKeyEvent', { type: 'char', text: char });
         }
 
-        const finalValue = await this._eval(`(() => { const el = ${expr}; return el?.value; })()`);
+        const finalValue = await this.eval(`(() => { const el = ${expr}; return el?.value; })()`);
         return `Typed "${action.text}" into ${action.selector} (value: "${finalValue ?? 'N/A'}")`;
       }
 
       case 'clear': {
-        const expr = this._getSelectorExpression(action.selector);
-        await this._eval(`
+        const expr = this.getSelectorExpression(action.selector);
+        await this.eval(`
           (() => {
             const el = ${expr};
             if (!el) throw new Error('Element not found');
@@ -896,21 +887,21 @@ export class UnifiedBackend {
           text, unmodifiedText: text,
         };
 
-        await this._cdp('Input.dispatchKeyEvent', { type: 'keyDown', ...params });
-        await this._cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...params });
+        await this.cdp('Input.dispatchKeyEvent', { type: 'keyDown', ...params });
+        await this.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...params });
         return `Pressed ${key}`;
       }
 
       case 'hover': {
-        const { x, y } = await this._getElementCenter(action.selector);
-        await this._cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+        const { x, y } = await this.getElementCenter(action.selector);
+        await this.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
         return `Hovered ${action.selector} at (${x}, ${y})`;
       }
 
       case 'wait': {
         const timeout = action.timeout || 30000;
         if (action.selector) {
-          await this._eval(`
+          await this.eval(`
             new Promise((resolve, reject) => {
               const timeout = setTimeout(() => reject(new Error('Timeout waiting for element')), ${timeout});
               const check = () => {
@@ -926,13 +917,13 @@ export class UnifiedBackend {
           `);
           return `Element appeared: ${action.selector}`;
         } else {
-          await this._sleep(timeout);
+          await this.sleep(timeout);
           return `Waited ${timeout}ms`;
         }
       }
 
       case 'mouse_move': {
-        await this._cdp('Input.dispatchMouseEvent', {
+        await this.cdp('Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: action.x, y: action.y,
         });
         return `Moved to (${action.x}, ${action.y})`;
@@ -941,10 +932,10 @@ export class UnifiedBackend {
       case 'mouse_click': {
         const button = action.button || 'left';
         const clickCount = action.clickCount || 1;
-        await this._cdp('Input.dispatchMouseEvent', {
+        await this.cdp('Input.dispatchMouseEvent', {
           type: 'mousePressed', x: action.x, y: action.y, button, clickCount, buttons: 1,
         });
-        await this._cdp('Input.dispatchMouseEvent', {
+        await this.cdp('Input.dispatchMouseEvent', {
           type: 'mouseReleased', x: action.x, y: action.y, button, clickCount,
         });
         return `Clicked at (${action.x}, ${action.y})`;
@@ -952,27 +943,27 @@ export class UnifiedBackend {
 
       case 'scroll_to': {
         if (action.selector) {
-          const expr = this._getSelectorExpression(action.selector);
-          await this._eval(`(() => { const el = ${expr}; if (el) el.scrollTo(${action.x || 0}, ${action.y || 0}); })()`);
+          const expr = this.getSelectorExpression(action.selector);
+          await this.eval(`(() => { const el = ${expr}; if (el) el.scrollTo(${action.x || 0}, ${action.y || 0}); })()`);
           return `Scrolled ${action.selector} to (${action.x || 0}, ${action.y || 0})`;
         }
-        await this._eval(`window.scrollTo(${action.x || 0}, ${action.y || 0})`);
+        await this.eval(`window.scrollTo(${action.x || 0}, ${action.y || 0})`);
         return `Scrolled window to (${action.x || 0}, ${action.y || 0})`;
       }
 
       case 'scroll_by': {
         if (action.selector) {
-          const expr = this._getSelectorExpression(action.selector);
-          await this._eval(`(() => { const el = ${expr}; if (el) el.scrollBy(${action.x || 0}, ${action.y || 0}); })()`);
+          const expr = this.getSelectorExpression(action.selector);
+          await this.eval(`(() => { const el = ${expr}; if (el) el.scrollBy(${action.x || 0}, ${action.y || 0}); })()`);
           return `Scrolled ${action.selector} by (${action.x || 0}, ${action.y || 0})`;
         }
-        await this._eval(`window.scrollBy(${action.x || 0}, ${action.y || 0})`);
+        await this.eval(`window.scrollBy(${action.x || 0}, ${action.y || 0})`);
         return `Scrolled window by (${action.x || 0}, ${action.y || 0})`;
       }
 
       case 'scroll_into_view': {
-        const expr = this._getSelectorExpression(action.selector);
-        await this._eval(`
+        const expr = this.getSelectorExpression(action.selector);
+        await this.eval(`
           (() => {
             const el = ${expr};
             if (!el) throw new Error('Element not found');
@@ -983,8 +974,8 @@ export class UnifiedBackend {
       }
 
       case 'select_option': {
-        const expr = this._getSelectorExpression(action.selector);
-        const result = await this._eval(`
+        const expr = this.getSelectorExpression(action.selector);
+        const result = await this.eval(`
           (() => {
             const el = ${expr};
             if (!el || el.tagName !== 'SELECT') throw new Error('Not a <select> element');
@@ -1011,14 +1002,14 @@ export class UnifiedBackend {
 
       case 'file_upload': {
         // Get the element's backendNodeId
-        const evalResult = await this._cdp('Runtime.evaluate', {
+        const evalResult = await this.cdp('Runtime.evaluate', {
           expression: `document.querySelector(${JSON.stringify(action.selector)})`,
           returnByValue: false,
         });
         if (!evalResult.result?.objectId) throw new Error(`Element not found: ${action.selector}`);
 
-        const nodeResult = await this._cdp('DOM.describeNode', { objectId: evalResult.result.objectId });
-        await this._cdp('DOM.setFileInputFiles', {
+        const nodeResult = await this.cdp('DOM.describeNode', { objectId: evalResult.result.objectId });
+        await this.cdp('DOM.setFileInputFiles', {
           files: action.files,
           backendNodeId: nodeResult.node.backendNodeId,
         });
@@ -1027,14 +1018,14 @@ export class UnifiedBackend {
 
       case 'force_pseudo_state': {
         const pseudoStates = action.pseudoStates || [];
-        const doc = await this._cdp('DOM.getDocument', {});
-        const nodeResult = await this._cdp('DOM.querySelector', {
+        const doc = await this.cdp('DOM.getDocument', {});
+        const nodeResult = await this.cdp('DOM.querySelector', {
           nodeId: doc.root.nodeId,
           selector: action.selector,
         });
         if (!nodeResult.nodeId) throw new Error(`Element not found: ${action.selector}`);
 
-        await this._cdp('CSS.forcePseudoState', {
+        await this.cdp('CSS.forcePseudoState', {
           nodeId: nodeResult.nodeId,
           forcedPseudoClasses: pseudoStates,
         });
@@ -1048,8 +1039,8 @@ export class UnifiedBackend {
 
   // ─── Snapshot ───────────────────────────────────────────────
 
-  private async _handleSnapshot(options: any): Promise<any> {
-    const result = await this._transport!.sendCommand('snapshot', {});
+  private async onSnapshot(options: any): Promise<any> {
+    const result = await this.ext!.sendCmd('snapshot', {});
 
     if (options.rawResult) return result;
 
@@ -1073,11 +1064,11 @@ export class UnifiedBackend {
 
   // ─── Lookup ─────────────────────────────────────────────────
 
-  private async _handleLookup(args: any, options: any): Promise<any> {
+  private async onLookup(args: any, options: any): Promise<any> {
     const searchText = args.text as string;
     const limit = (args.limit as number) || 10;
 
-    const data = await this._eval(`
+    const data = await this.eval(`
       (() => {
         const searchText = ${JSON.stringify(searchText)};
         const searchLower = searchText.trim().toLowerCase();
@@ -1137,13 +1128,13 @@ export class UnifiedBackend {
 
   // ─── Extract Content ────────────────────────────────────────
 
-  private async _handleExtractContent(args: any, options: any): Promise<any> {
+  private async onExtractContent(args: any, options: any): Promise<any> {
     const mode = (args.mode as string) || 'auto';
     const maxLines = (args.max_lines as number) || 500;
     const offset = (args.offset as number) || 0;
     const selector = args.selector as string | undefined;
 
-    const content = await this._eval(`
+    const content = await this.eval(`
       (() => {
         function getRoot() {
           ${mode === 'selector' && selector
@@ -1216,7 +1207,7 @@ export class UnifiedBackend {
       })()
     `);
 
-    if (content?.error) return this._error(content.error, options);
+    if (content?.error) return this.error(content.error, options);
 
     const allLines = content?.lines || [];
     const slice = allLines.slice(offset, offset + maxLines);
@@ -1237,14 +1228,14 @@ export class UnifiedBackend {
   // ─── Element Styles ─────────────────────────────────────────
 
   /** Strip content hashes from CSS filenames: `frontend-abc123.css` → `frontend.css` */
-  private _cleanCSSFilename(href: string): string {
+  private cleanCSSFilename(href: string): string {
     const parts = href.split('/');
     let filename = parts[parts.length - 1].split('?')[0];
     filename = filename.replace(/-[a-f0-9]{6,16}\./, '.');
     return filename;
   }
 
-  private async _handleGetElementStyles(args: any, options: any): Promise<any> {
+  private async onGetElementStyles(args: any, options: any): Promise<any> {
     const selector = args.selector as string;
     const propertyFilter = args.property ? (args.property as string).toLowerCase() : null;
     let pseudoState = args.pseudoState || [];
@@ -1253,8 +1244,8 @@ export class UnifiedBackend {
     }
 
     // Resolve nodeId from selector
-    const doc = await this._cdp('DOM.getDocument', {});
-    const queryResult = await this._cdp('DOM.querySelector', {
+    const doc = await this.cdp('DOM.getDocument', {});
+    const queryResult = await this.cdp('DOM.querySelector', {
       nodeId: doc.root.nodeId,
       selector,
     });
@@ -1262,17 +1253,17 @@ export class UnifiedBackend {
 
     // Force pseudo states if requested
     if (pseudoState.length > 0) {
-      await this._cdp('CSS.forcePseudoState', {
+      await this.cdp('CSS.forcePseudoState', {
         nodeId: queryResult.nodeId,
         forcedPseudoClasses: pseudoState,
       });
     }
 
     // Get matched styles
-    const styles = await this._cdp('CSS.getMatchedStylesForNode', { nodeId: queryResult.nodeId });
+    const styles = await this.cdp('CSS.getMatchedStylesForNode', { nodeId: queryResult.nodeId });
 
     // Collect external CSS file list for source heuristic
-    const externalCSSFiles: string[] = await this._eval(`
+    const externalCSSFiles: string[] = await this.eval(`
       Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
         .map(l => l.href).filter(Boolean)
     `) || [];
@@ -1298,7 +1289,7 @@ export class UnifiedBackend {
         const lineNum = rule.style.range ? rule.style.range.startLine + 1 : '?';
         let filename: string | null = null;
         if (externalCSSFiles.length >= 1) {
-          filename = this._cleanCSSFilename(externalCSSFiles[0]);
+          filename = this.cleanCSSFilename(externalCSSFiles[0]);
         }
         source = filename ? `${filename}:${lineNum}` : `stylesheet:${lineNum}`;
       } else {
@@ -1360,7 +1351,7 @@ export class UnifiedBackend {
 
     // Clean up pseudo states
     if (pseudoState.length > 0) {
-      await this._cdp('CSS.forcePseudoState', {
+      await this.cdp('CSS.forcePseudoState', {
         nodeId: queryResult.nodeId,
         forcedPseudoClasses: [],
       }).catch(() => {});
@@ -1420,7 +1411,7 @@ export class UnifiedBackend {
 
   // ─── Screenshot ─────────────────────────────────────────────
 
-  private async _handleScreenshot(args: any, options: any): Promise<any> {
+  private async onScreenshot(args: any, options: any): Promise<any> {
     const filePath = args.path as string | undefined;
 
     // Build capture params
@@ -1436,7 +1427,7 @@ export class UnifiedBackend {
 
     // Highlight clickable elements if requested
     if (args.highlightClickables) {
-      await this._eval(`
+      await this.eval(`
         (() => {
           const clickables = document.querySelectorAll('a, button, input, select, textarea, [onclick], [role="button"]');
           clickables.forEach(el => {
@@ -1445,14 +1436,14 @@ export class UnifiedBackend {
           });
         })()
       `);
-      await this._sleep(100);
+      await this.sleep(100);
     }
 
-    const result = await this._transport!.sendCommand('screenshot', captureParams, 60000);
+    const result = await this.ext!.sendCmd('screenshot', captureParams, 60000);
 
     // Remove highlights
     if (args.highlightClickables) {
-      await this._eval(`
+      await this.eval(`
         (() => {
           const clickables = document.querySelectorAll('a, button, input, select, textarea, [onclick], [role="button"]');
           clickables.forEach(el => {
@@ -1464,7 +1455,7 @@ export class UnifiedBackend {
     }
 
     if (!result?.data) {
-      return this._formatResult('browser_take_screenshot', result, options);
+      return this.formatResult('browser_take_screenshot', result, options);
     }
 
     let buffer = Buffer.from(result.data, 'base64');
@@ -1499,10 +1490,10 @@ export class UnifiedBackend {
             })
             .toBuffer());
 
-          debugLog(`Screenshot downscaled from ${dims.width}x${dims.height} to ${targetW}x${targetH}`);
+          log(`Screenshot downscaled from ${dims.width}x${dims.height} to ${targetW}x${targetH}`);
         }
       } catch (e: any) {
-        debugLog('Screenshot downscale failed, returning original:', e.message);
+        log('Screenshot downscale failed, returning original:', e.message);
       }
     }
 
@@ -1518,9 +1509,9 @@ export class UnifiedBackend {
 
   // ─── Evaluate ───────────────────────────────────────────────
 
-  private async _handleEvaluate(args: any, options: any): Promise<any> {
+  private async onEvaluate(args: any, options: any): Promise<any> {
     const code = (args.function || args.expression || '') as string;
-    const result = await this._transport!.sendCommand('evaluate', {
+    const result = await this.ext!.sendCmd('evaluate', {
       function: args.function,
       expression: args.expression,
     });
@@ -1537,8 +1528,8 @@ export class UnifiedBackend {
 
   // ─── Console Messages ──────────────────────────────────────
 
-  private async _handleConsoleMessages(args: any, options: any): Promise<any> {
-    const result = await this._transport!.sendCommand('consoleMessages', {});
+  private async onConsoleMessages(args: any, options: any): Promise<any> {
+    const result = await this.ext!.sendCmd('consoleMessages', {});
     let messages = result?.messages || [];
 
     // Apply filters
@@ -1571,23 +1562,45 @@ export class UnifiedBackend {
 
   // ─── Fill Form ──────────────────────────────────────────────
 
-  private async _handleFillForm(args: any, options: any): Promise<any> {
+  private async onFillForm(args: any, options: any): Promise<any> {
     const fields = args.fields as any[];
     const results: string[] = [];
 
     for (const field of fields) {
-      const expr = this._getSelectorExpression(field.selector);
-      await this._eval(`
+      const expr = this.getSelectorExpression(field.selector);
+      await this.eval(`
         (() => {
           const el = ${expr};
           if (!el) throw new Error('Element not found: ${field.selector}');
+          const tag = el.tagName;
+          const type = el.type;
 
-          if (el.type === 'checkbox' || el.type === 'radio') {
+          if (type === 'checkbox' || type === 'radio') {
             el.checked = ${JSON.stringify(field.value)} === 'true' || ${JSON.stringify(field.value)} === true;
+          } else if (tag === 'SELECT') {
+            const options = Array.from(el.options);
+            const target = ${JSON.stringify(field.value)};
+            if (el.multiple) {
+              // Multi-select: value can be comma-separated
+              const targets = target.split(',').map(t => t.trim());
+              for (const opt of options) {
+                opt.selected = targets.includes(opt.value) || targets.includes(opt.textContent?.trim());
+              }
+            } else {
+              let opt = options.find(o => o.value === target);
+              if (!opt) opt = options.find(o => o.textContent?.trim().toLowerCase() === target.toLowerCase());
+              if (!opt) throw new Error('Option not found: ' + target);
+              const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+              if (setter) setter.call(el, opt.value);
+              else el.value = opt.value;
+            }
+          } else if (tag === 'TEXTAREA') {
+            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+            if (setter) setter.call(el, ${JSON.stringify(field.value)});
+            else el.value = ${JSON.stringify(field.value)};
           } else {
-            const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-              || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-            if (nativeSetter) nativeSetter.call(el, ${JSON.stringify(field.value)});
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (setter) setter.call(el, ${JSON.stringify(field.value)});
             else el.value = ${JSON.stringify(field.value)};
           }
 
@@ -1604,15 +1617,15 @@ export class UnifiedBackend {
 
   // ─── Drag ───────────────────────────────────────────────────
 
-  private async _handleDrag(args: any, options: any): Promise<any> {
-    const from = await this._getElementCenter(args.fromSelector);
-    const to = await this._getElementCenter(args.toSelector);
+  private async onDrag(args: any, options: any): Promise<any> {
+    const from = await this.getElementCenter(args.fromSelector);
+    const to = await this.getElementCenter(args.toSelector);
 
     // Press at source
-    await this._cdp('Input.dispatchMouseEvent', {
+    await this.cdp('Input.dispatchMouseEvent', {
       type: 'mouseMoved', x: from.x, y: from.y,
     });
-    await this._cdp('Input.dispatchMouseEvent', {
+    await this.cdp('Input.dispatchMouseEvent', {
       type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1,
     });
 
@@ -1621,13 +1634,13 @@ export class UnifiedBackend {
     for (let i = 1; i <= steps; i++) {
       const x = Math.round(from.x + (to.x - from.x) * (i / steps));
       const y = Math.round(from.y + (to.y - from.y) * (i / steps));
-      await this._cdp('Input.dispatchMouseEvent', {
+      await this.cdp('Input.dispatchMouseEvent', {
         type: 'mouseMoved', x, y, buttons: 1,
       });
     }
 
     // Release at target
-    await this._cdp('Input.dispatchMouseEvent', {
+    await this.cdp('Input.dispatchMouseEvent', {
       type: 'mouseReleased', x: to.x, y: to.y, button: 'left',
     });
 
@@ -1642,20 +1655,20 @@ export class UnifiedBackend {
 
   // ─── Window ─────────────────────────────────────────────────
 
-  private async _handleWindow(args: any, options: any): Promise<any> {
-    const result = await this._transport!.sendCommand('window', {
+  private async onWindow(args: any, options: any): Promise<any> {
+    const result = await this.ext!.sendCmd('window', {
       action: args.action,
       width: args.width,
       height: args.height,
     });
-    return this._formatResult('browser_window', result, options);
+    return this.formatResult('browser_window', result, options);
   }
 
   // ─── Verification ───────────────────────────────────────────
 
-  private async _handleVerifyTextVisible(args: any, options: any): Promise<any> {
+  private async onVerifyTextVisible(args: any, options: any): Promise<any> {
     const text = args.text as string;
-    const found = await this._eval(`document.body.innerText.includes(${JSON.stringify(text)})`);
+    const found = await this.eval(`document.body.innerText.includes(${JSON.stringify(text)})`);
 
     if (options.rawResult) return { visible: found, text };
     return {
@@ -1667,9 +1680,9 @@ export class UnifiedBackend {
     };
   }
 
-  private async _handleVerifyElementVisible(args: any, options: any): Promise<any> {
+  private async onVerifyElementVisible(args: any, options: any): Promise<any> {
     const selector = args.selector as string;
-    const result = await this._eval(`
+    const result = await this.eval(`
       (() => {
         const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) return { exists: false, visible: false };
@@ -1694,16 +1707,16 @@ export class UnifiedBackend {
 
   // ─── Network Requests ──────────────────────────────────────
 
-  private async _handleNetworkRequests(args: any, options: any): Promise<any> {
+  private async onNetworkRequests(args: any, options: any): Promise<any> {
     const action = (args.action as string) || 'list';
 
     if (action === 'clear') {
-      await this._transport!.sendCommand('clearNetwork', {});
+      await this.ext!.sendCmd('clearNetwork', {});
       if (options.rawResult) return { success: true };
       return { content: [{ type: 'text', text: 'Network requests cleared' }] };
     }
 
-    const result = await this._transport!.sendCommand('networkRequests', {});
+    const result = await this.ext!.sendCmd('networkRequests', {});
     let requests = result?.requests || [];
 
     // Apply filters
@@ -1722,16 +1735,16 @@ export class UnifiedBackend {
 
     if (action === 'details' && args.requestId) {
       const req = requests.find((r: any) => r.requestId === args.requestId);
-      if (!req) return this._error(`Request not found: \`${args.requestId}\`\n\nUse \`action='list'\` to see available request IDs.`, options);
+      if (!req) return this.error(`Request not found: \`${args.requestId}\`\n\nUse \`action='list'\` to see available request IDs.`, options);
       if (options.rawResult) return req;
       return { content: [{ type: 'text', text: JSON.stringify(req, null, 2) }] };
     }
 
     if (action === 'replay' && args.requestId) {
       const req = requests.find((r: any) => r.requestId === args.requestId);
-      if (!req) return this._error(`Request not found: \`${args.requestId}\`\n\nUse \`action='list'\` to see available request IDs.`, options);
+      if (!req) return this.error(`Request not found: \`${args.requestId}\`\n\nUse \`action='list'\` to see available request IDs.`, options);
 
-      const replayResult = await this._eval(`
+      const replayResult = await this.eval(`
         fetch(${JSON.stringify(req.url)}, {
           method: ${JSON.stringify(req.method || 'GET')},
           ${req.postData ? `body: ${JSON.stringify(req.postData)},` : ''}
@@ -1765,9 +1778,9 @@ export class UnifiedBackend {
 
   // ─── PDF Save ───────────────────────────────────────────────
 
-  private async _handlePdfSave(args: any, options: any): Promise<any> {
+  private async onPdfSave(args: any, options: any): Promise<any> {
     const filePath = args.path as string;
-    const result: any = await this._cdp('Page.printToPDF', {});
+    const result: any = await this.cdp('Page.printToPDF', {});
 
     if (result?.data) {
       const buffer = Buffer.from(result.data, 'base64');
@@ -1779,7 +1792,7 @@ export class UnifiedBackend {
       };
     }
 
-    return this._error(
+    return this.error(
       'PDF generation failed.\n\n' +
       '**Troubleshooting:**\n' +
       '- Ensure a tab is attached via `browser_tabs action=\'attach\'`\n' +
@@ -1790,43 +1803,43 @@ export class UnifiedBackend {
 
   // ─── Dialog ─────────────────────────────────────────────────
 
-  private async _handleDialog(args: any, options: any): Promise<any> {
+  private async onDialog(args: any, options: any): Promise<any> {
     if (args.accept !== undefined) {
-      const result = await this._transport!.sendCommand('dialog', {
+      const result = await this.ext!.sendCmd('dialog', {
         accept: args.accept,
         text: args.text,
       });
-      return this._formatResult('browser_handle_dialog', result, options);
+      return this.formatResult('browser_handle_dialog', result, options);
     }
 
     // Get dialog events
-    const result = await this._transport!.sendCommand('dialog', {});
-    return this._formatResult('browser_handle_dialog', result, options);
+    const result = await this.ext!.sendCmd('dialog', {});
+    return this.formatResult('browser_handle_dialog', result, options);
   }
 
   // ─── Extensions ─────────────────────────────────────────────
 
-  private async _handleListExtensions(options: any): Promise<any> {
-    const result = await this._transport!.sendCommand('listExtensions', {});
-    return this._formatResult('browser_list_extensions', result, options);
+  private async onListExtensions(options: any): Promise<any> {
+    const result = await this.ext!.sendCmd('listExtensions', {});
+    return this.formatResult('browser_list_extensions', result, options);
   }
 
-  private async _handleReloadExtensions(args: any, options: any): Promise<any> {
-    const result = await this._transport!.sendCommand('reloadExtension', {
+  private async onReloadExtensions(args: any, options: any): Promise<any> {
+    const result = await this.ext!.sendCmd('reloadExtension', {
       extensionName: args.extensionName,
     });
-    return this._formatResult('browser_reload_extensions', result, options);
+    return this.formatResult('browser_reload_extensions', result, options);
   }
 
   // ─── Performance Metrics ────────────────────────────────────
 
-  private async _handlePerformanceMetrics(options: any): Promise<any> {
+  private async onPerformanceMetrics(options: any): Promise<any> {
     // Get CDP metrics
-    const cdpResult = await this._transport!.sendCommand('performanceMetrics', {});
+    const cdpResult = await this.ext!.sendCmd('performanceMetrics', {});
     const metrics = cdpResult?.metrics || [];
 
     // Get Web Vitals from page
-    const vitals = await this._eval(`
+    const vitals = await this.eval(`
       (() => {
         const perf = performance.getEntriesByType('navigation')[0] || {};
         const paint = performance.getEntriesByType('paint') || [];
@@ -1864,23 +1877,23 @@ export class UnifiedBackend {
 
   // ─── Secure Fill ────────────────────────────────────────────
 
-  private async _handleSecureFill(args: any, options: any): Promise<any> {
+  private async onSecureFill(args: any, options: any): Promise<any> {
     const selector = args.selector as string;
     const envName = args.credential_env as string;
 
     if (!selector || !envName) {
-      return this._error('Both selector and credential_env are required.', options);
+      return this.error('Both selector and credential_env are required.', options);
     }
 
     const value = process.env[envName];
     if (value === undefined) {
-      return this._error(
+      return this.error(
         `Environment variable "${envName}" is not set. Set it before starting the server.`,
         options
       );
     }
 
-    await this._transport!.sendCommand('secure_fill', { selector, value });
+    await this.ext!.sendCmd('secure_fill', { selector, value });
 
     if (options.rawResult) {
       return { success: true, selector, credential_env: envName };
@@ -1896,17 +1909,17 @@ export class UnifiedBackend {
 
   // ─── Helpers ────────────────────────────────────────────────
 
-  private _formatResult(name: string, result: any, options: { rawResult?: boolean }): any {
+  private formatResult(name: string, result: any, options: { rawResult?: boolean }): any {
     if (options.rawResult) return result;
 
-    // Update stateful backend's tab info if result contains it
-    if (result && this._statefulBackend) {
-      if (result.attachedTab) this._statefulBackend.setAttachedTab(result.attachedTab);
-      if (result.browserName) this._statefulBackend.setConnectedBrowserName(result.browserName);
-      if (result.stealthMode !== undefined) this._statefulBackend.setStealthMode(result.stealthMode);
+    // Update connection manager's tab info if result contains it
+    if (result && this.connectionManager) {
+      if (result.attachedTab) this.connectionManager.setAttachedTab(result.attachedTab);
+      if (result.browserName) this.connectionManager.setConnectedBrowserName(result.browserName);
+      if (result.stealthMode !== undefined) this.connectionManager.setStealthMode(result.stealthMode);
     }
 
-    const statusHeader = this._statefulBackend?._getStatusHeader() || '';
+    const statusHeader = this.connectionManager?.statusHeader() || '';
 
     // Screenshot image data
     if (result?.data && name === 'browser_take_screenshot') {
@@ -1925,7 +1938,7 @@ export class UnifiedBackend {
     return { content: [{ type: 'text', text: statusHeader + text }] };
   }
 
-  private _error(message: string, options: { rawResult?: boolean }): any {
+  private error(message: string, options: { rawResult?: boolean }): any {
     if (options.rawResult) return { success: false, error: message };
     return {
       content: [{ type: 'text', text: `### Error\n\n${message}` }],

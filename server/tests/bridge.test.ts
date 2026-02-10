@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ExtensionServer } from '../src/extensionServer';
+import { ExtensionServer } from '../src/bridge';
 import WebSocket from 'ws';
 
 // Mock the logger
@@ -9,6 +9,7 @@ vi.mock('../src/logger', () => ({
     enable: vi.fn(),
     disable: vi.fn(),
   }),
+  createLog: () => (..._args: unknown[]) => {},
 }));
 
 // Use a range of ports to avoid conflicts between test runs
@@ -30,7 +31,7 @@ function connectClient(port: number): { ws: WebSocket; ready: Promise<void> } {
   return { ws, ready };
 }
 
-describe('ExtensionServer', () => {
+describe('ExtensionServer (bridge)', () => {
   let server: ExtensionServer;
   let port: number;
   const clients: WebSocket[] = [];
@@ -58,7 +59,6 @@ describe('ExtensionServer', () => {
   describe('start() and stop()', () => {
     it('starts HTTP + WebSocket server', async () => {
       await server.start();
-      // Server is listening — try to connect
       const { ws, ready } = connectClient(port);
       clients.push(ws);
       await ready;
@@ -87,12 +87,12 @@ describe('ExtensionServer', () => {
     });
   });
 
-  // ---- isConnected ----
+  // ---- connected getter ----
 
-  describe('isConnected()', () => {
+  describe('connected', () => {
     it('returns false when no client connected', async () => {
       await server.start();
-      expect(server.isConnected()).toBe(false);
+      expect(server.connected).toBe(false);
     });
 
     it('returns true when client is connected', async () => {
@@ -101,9 +101,8 @@ describe('ExtensionServer', () => {
       clients.push(ws);
       await ready;
 
-      // Small delay to ensure server registers the connection
       await new Promise((r) => setTimeout(r, 50));
-      expect(server.isConnected()).toBe(true);
+      expect(server.connected).toBe(true);
     });
 
     it('returns false after client disconnects', async () => {
@@ -115,16 +114,16 @@ describe('ExtensionServer', () => {
 
       ws.close();
       await new Promise((r) => setTimeout(r, 100));
-      expect(server.isConnected()).toBe(false);
+      expect(server.connected).toBe(false);
     });
   });
 
-  // ---- sendCommand ----
+  // ---- sendCmd ----
 
-  describe('sendCommand()', () => {
+  describe('sendCmd()', () => {
     it('throws when not connected', async () => {
       await server.start();
-      await expect(server.sendCommand('test_method')).rejects.toThrow('Extension not connected');
+      await expect(server.sendCmd('test_method')).rejects.toThrow('Extension not connected');
     });
 
     it('sends JSON-RPC and resolves on response', async () => {
@@ -134,7 +133,6 @@ describe('ExtensionServer', () => {
       await ready;
       await new Promise((r) => setTimeout(r, 50));
 
-      // Client echoes back a response for any received message
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
         if (msg.method) {
@@ -147,7 +145,7 @@ describe('ExtensionServer', () => {
         }
       });
 
-      const result = await server.sendCommand('test_method', { foo: 'bar' });
+      const result = await server.sendCmd('test_method', { foo: 'bar' });
       expect(result).toEqual({ success: true, data: 'hello' });
     });
 
@@ -159,8 +157,7 @@ describe('ExtensionServer', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       // Client does NOT respond — should timeout
-      // Use a very short real timeout to avoid needing fake timers with real sockets
-      await expect(server.sendCommand('slow_method', {}, 200)).rejects.toThrow('Request timeout');
+      await expect(server.sendCmd('slow_method', {}, 200)).rejects.toThrow('Request timeout');
     });
 
     it('sends correct JSON-RPC 2.0 format', async () => {
@@ -174,11 +171,10 @@ describe('ExtensionServer', () => {
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
         receivedMessages.push(msg);
-        // Send response
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }));
       });
 
-      await server.sendCommand('my_method', { key: 'val' });
+      await server.sendCmd('my_method', { key: 'val' });
 
       expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
       const sent = receivedMessages[0];
@@ -207,11 +203,11 @@ describe('ExtensionServer', () => {
         );
       });
 
-      await expect(server.sendCommand('fail_method')).rejects.toThrow('Something broke');
+      await expect(server.sendCmd('fail_method')).rejects.toThrow('Something broke');
     });
   });
 
-  // ---- _handleMessage ----
+  // ---- message handling ----
 
   describe('message handling', () => {
     it('handles handshake messages', async () => {
@@ -230,8 +226,8 @@ describe('ExtensionServer', () => {
       );
 
       await new Promise((r) => setTimeout(r, 100));
-      expect(server.getBuildTimestamp()).toBe('2026-01-15T10:00:00.000Z');
-      expect(server.getBrowserType()).toBe('firefox');
+      expect(server.buildTime).toBe('2026-01-15T10:00:00.000Z');
+      expect(server.browser).toBe('firefox');
     });
 
     it('handles tab info update notifications', async () => {
@@ -285,7 +281,7 @@ describe('ExtensionServer', () => {
         }
       });
 
-      await server.sendCommand('some_command');
+      await server.sendCmd('some_command');
 
       expect(tabInfoCallback).toHaveBeenCalledWith({
         id: 5,
@@ -295,9 +291,9 @@ describe('ExtensionServer', () => {
     });
   });
 
-  // ---- setClientId ----
+  // ---- notifyClientId ----
 
-  describe('setClientId()', () => {
+  describe('notifyClientId()', () => {
     it('sends notification when connected', async () => {
       await server.start();
       const { ws, ready } = connectClient(port);
@@ -310,7 +306,7 @@ describe('ExtensionServer', () => {
         receivedMessages.push(JSON.parse(data.toString()));
       });
 
-      server.setClientId('my-project');
+      server.notifyClientId('my-project');
       await new Promise((r) => setTimeout(r, 100));
 
       const notification = receivedMessages.find((m) => m.method === 'authenticated');
@@ -319,17 +315,16 @@ describe('ExtensionServer', () => {
     });
 
     it('does not throw when not connected', () => {
-      // Should just silently do nothing
-      expect(() => server.setClientId('my-project')).not.toThrow();
+      expect(() => server.notifyClientId('my-project')).not.toThrow();
     });
   });
 
-  // ---- getBuildTimestamp ----
+  // ---- buildTime getter ----
 
-  describe('getBuildTimestamp()', () => {
+  describe('buildTime', () => {
     it('returns null before handshake', async () => {
       await server.start();
-      expect(server.getBuildTimestamp()).toBeNull();
+      expect(server.buildTime).toBeNull();
     });
 
     it('returns value from handshake', async () => {
@@ -342,7 +337,7 @@ describe('ExtensionServer', () => {
       ws.send(JSON.stringify({ type: 'handshake', buildTimestamp: '2026-02-01T00:00:00Z' }));
       await new Promise((r) => setTimeout(r, 100));
 
-      expect(server.getBuildTimestamp()).toBe('2026-02-01T00:00:00Z');
+      expect(server.buildTime).toBe('2026-02-01T00:00:00Z');
     });
   });
 
@@ -361,12 +356,9 @@ describe('ExtensionServer', () => {
       await ready1;
       await new Promise((r) => setTimeout(r, 50));
 
-      // Close first connection but connect the second one immediately —
-      // The server still has _extensionWs set (close event hasn't fired on server yet),
-      // so the second connection is treated as a reconnection.
       ws1.close();
 
-      // Connect ws2 right away, before the server's close handler sets _extensionWs = null
+      // Connect ws2 right away, before the server's close handler clears socket
       const { ws: ws2, ready: ready2 } = connectClient(port);
       clients.push(ws2);
       await ready2;

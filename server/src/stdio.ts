@@ -1,14 +1,13 @@
 /**
- * Script Mode — JSON-RPC 2.0 over stdin/stdout
+ * Script Mode — JSON-RPC 2.0 over stdin/stdout.
  * No MCP overhead, no auth required.
- * Adapted from Blueprint MCP (Apache 2.0)
  */
 
 import readline from 'readline';
-import { StatefulBackend, BackendConfig } from './backend';
+import { ConnectionManager, BackendConfig } from './backend';
 
 export async function startScriptMode(config: BackendConfig): Promise<void> {
-  const backend = new StatefulBackend(config);
+  const backend = new ConnectionManager(config);
   await backend.initialize(null, {});
 
   const rl = readline.createInterface({
@@ -62,7 +61,7 @@ export async function startScriptMode(config: BackendConfig): Promise<void> {
 
 async function handleRequest(
   request: { jsonrpc?: string; id?: any; method?: string; params?: any },
-  backend: StatefulBackend
+  backend: ConnectionManager
 ): Promise<any> {
   const { jsonrpc, id, method, params } = request;
 

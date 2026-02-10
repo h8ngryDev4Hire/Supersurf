@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
  * SuperSurf MCP Server — CLI entry point
- * Adapted from Blueprint MCP (Apache 2.0)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -11,9 +10,9 @@ import { Command } from 'commander';
 import { spawn } from 'child_process';
 import { PassThrough } from 'stream';
 
-import { StatefulBackend, BackendConfig } from './backend';
+import { ConnectionManager, BackendConfig } from './backend';
 import { getLogger } from './logger';
-import { startScriptMode } from './scriptMode';
+import { startScriptMode } from './stdio';
 
 const VERSION = '0.1.0';
 
@@ -126,7 +125,7 @@ async function main(options: any): Promise<void> {
   }
 
   const config = resolveConfig(options);
-  const backend = new StatefulBackend(config);
+  const backend = new ConnectionManager(config);
 
   if ((global as any).DEBUG_MODE) {
     console.error(`[cli] Creating MCP Server v${VERSION}...`);

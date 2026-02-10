@@ -1,6 +1,5 @@
 /**
  * File Logger — writes debug logs to file + stderr
- * Adapted from Blueprint MCP (Apache 2.0)
  */
 
 import fs from 'fs';
@@ -73,3 +72,8 @@ export function getLogger(customLogPath?: string): FileLogger {
 }
 
 export { FileLogger };
+
+/** Factory for prefixed debug loggers. Only outputs when DEBUG_MODE is true. */
+export const createLog = (prefix: string) =>
+  (...args: unknown[]) =>
+    (global as any).DEBUG_MODE && getLogger().log(prefix, ...args);

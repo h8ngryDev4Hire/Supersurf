@@ -4,6 +4,10 @@
   "private": true,
   "description": "MCP browser automation for autonomous AI agents",
   "license": "Apache-2.0",
+  "workspaces": [
+    "server",
+    "extension"
+  ],
   "scripts": {
     "build:server": "cd server && npm run build",
     "build:extension": "cd extension && npm run build",
