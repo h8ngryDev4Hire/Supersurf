@@ -27,8 +27,9 @@ cd extension && npm run dev
 # Register MCP server with Claude
 npm run mcp
 
-# Tests (server only, Jest — no tests written yet)
-npm run test:server
+# Tests (Vitest)
+npm run test:server          # server unit tests
+cd extension && npx vitest   # extension unit tests
 ```
 
 **Server CLI flags:** `--debug` (verbose + hot reload), `--port <n>` (default 5555), `--log-file <path>`, `--script-mode` (JSON-RPC stdio, no MCP).
@@ -113,3 +114,32 @@ See `knowledge/chat/supersurf-browser-automation.md` for the full research conte
 **Server runtime:** `@modelcontextprotocol/sdk`, `commander`, `ws`, `sharp` (screenshots), `image-size`, `jsonpath-plus` (network filtering), `env-paths`.
 
 **Extension:** Zero runtime dependencies — browser APIs only.
+
+## Testing
+
+**Framework:** Vitest (both server and extension). Configs at `server/vitest.config.ts` and `extension/vitest.config.ts`.
+
+**Server tests** (`server/tests/`): Unit tests with mocked extension transport. Covers:
+- `backend.test.ts` — ConnectionManager state machine, tool routing, status headers
+- `bridge.test.ts` — ExtensionServer WebSocket lifecycle, JSON-RPC protocol, reconnection
+- `logger.test.ts` — FileLogger file I/O, singleton
+- `stdio.test.ts` — Script mode JSON-RPC routing, error codes, batch requests
+- `tools.test.ts` — BrowserBridge dispatch, error handling, rawResult mode
+- `tools-interaction.test.ts` — click/type/hover/scroll/wait/press_key actions
+- `tools-navigation.test.ts` — tab CRUD, navigate URL/back/forward/reload
+- `tools-content.test.ts` — snapshot, lookup, extract content
+- `tools-network.test.ts` — network request filtering/pagination, console messages
+- `tools-forms.test.ts` — form fill, drag, secure credential fill
+- `tools-misc.test.ts` — window/dialog/evaluate/verify/extensions/performance
+- `tools-styles.test.ts` — CSS inspection, pseudo-state forcing, property filtering
+- `experimental.test.ts` — ExperimentRegistry, page diffing, confidence scoring
+
+**Extension tests** (`extension/tests/`): Unit tests with Chrome API mocks (`__mocks__/chrome.ts`). Covers:
+- `handlers/tabs.test.ts` — tab create/select/close/list, tech stack tracking, tab groups
+- `handlers/network.test.ts` — webRequest event tracking, request lifecycle
+- `handlers/console.test.ts` — console message capture
+- `handlers/dialogs.test.ts` — dialog override injection
+- `connection/websocket.test.ts` — WebSocket connect/disconnect, handler registration, reconnect
+- `utils/logger.test.ts`, `utils/icons.test.ts`, `utils/unwrap.test.ts`
+
+**Not tested (by design):** `screenshot.ts` (requires Sharp + real image buffers), `background.ts` (service worker orchestration — would need integration tests with real Chrome).

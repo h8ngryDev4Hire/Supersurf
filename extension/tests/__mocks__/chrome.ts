@@ -101,6 +101,11 @@ export function createMockChrome() {
       onErrorOccurred: makeEvent(),
     },
 
+    tabGroups: {
+      update: vi.fn(async () => ({})),
+      onRemoved: makeEvent(),
+    },
+
     windows: {
       update: vi.fn(async () => ({})),
       remove: vi.fn(async () => {}),

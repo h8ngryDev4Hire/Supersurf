@@ -143,6 +143,7 @@ describe('TabHandlers', () => {
           index: 3,
           title: 'My Page',
           url: 'https://test.com',
+          groupId: -1,
         },
         stealthMode: true,
       });
@@ -152,8 +153,8 @@ describe('TabHandlers', () => {
   describe('selectTab()', () => {
     it('attaches to an existing tab by index', async () => {
       mockChrome.tabs.query.mockResolvedValue([
-        { id: 10, title: 'Tab 0', url: 'https://a.com' },
-        { id: 20, title: 'Tab 1', url: 'https://b.com' },
+        { id: 10, index: 0, title: 'Tab 0', url: 'https://a.com' },
+        { id: 20, index: 1, title: 'Tab 1', url: 'https://b.com' },
       ]);
 
       const result = await tabs.selectTab({ index: 1 });
@@ -207,14 +208,15 @@ describe('TabHandlers', () => {
       expect(mockChrome.tabs.update).toHaveBeenCalledWith(10, { active: true });
     });
 
-    it('does not activate the tab when activate is not set', async () => {
+    it('activates the tab by default when activate is not set', async () => {
       mockChrome.tabs.query.mockResolvedValue([
-        { id: 10, title: 'Tab 0', url: 'https://a.com' },
+        { id: 10, index: 0, title: 'Tab 0', url: 'https://a.com' },
       ]);
 
       await tabs.selectTab({ index: 0 });
 
-      expect(mockChrome.tabs.update).not.toHaveBeenCalled();
+      // Default behavior: activate !== false, so tab is activated
+      expect(mockChrome.tabs.update).toHaveBeenCalledWith(10, { active: true });
     });
 
     it('calls console/dialog injectors', async () => {
@@ -267,7 +269,7 @@ describe('TabHandlers', () => {
         { id: 20, title: 'Tab 1', url: 'https://b.com' },
       ]);
 
-      const result = await tabs.closeTab(1);
+      const result = await tabs.closeTab({ index: 1 });
 
       expect(mockChrome.tabs.remove).toHaveBeenCalledWith(20);
       expect(result.success).toBe(true);
@@ -282,7 +284,7 @@ describe('TabHandlers', () => {
         { id: 10, title: 'Tab 0', url: 'https://a.com' },
       ]);
 
-      await expect(tabs.closeTab(5)).rejects.toThrow('out of range');
+      await expect(tabs.closeTab({ index: 5 })).rejects.toThrow('out of range');
     });
 
     it('clears attached tab if the closed tab was attached', async () => {
@@ -294,7 +296,7 @@ describe('TabHandlers', () => {
         { id: 60, title: 'Tab', url: 'about:blank' },
       ]);
 
-      await tabs.closeTab(0);
+      await tabs.closeTab({ index: 0 });
 
       expect(tabs.getAttachedTabId()).toBeNull();
       expect(mockIconManager.setAttachedTab).toHaveBeenCalledWith(null);
@@ -362,8 +364,8 @@ describe('TabHandlers', () => {
   describe('getTabs()', () => {
     it('returns formatted tab list with attached status', async () => {
       mockChrome.tabs.query.mockResolvedValue([
-        { id: 1, title: 'Google', url: 'https://google.com' },
-        { id: 2, title: 'GitHub', url: 'https://github.com' },
+        { id: 1, index: 0, title: 'Google', url: 'https://google.com' },
+        { id: 2, index: 1, title: 'GitHub', url: 'https://github.com' },
       ]);
 
       const result = await tabs.getTabs();
@@ -376,6 +378,7 @@ describe('TabHandlers', () => {
         url: 'https://google.com',
         automatable: true,
         attached: false,
+        groupId: -1,
         stealthMode: null,
         techStack: null,
       });
