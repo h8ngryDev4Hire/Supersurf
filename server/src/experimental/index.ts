@@ -46,9 +46,34 @@ class ExperimentRegistry {
     return states;
   }
 
-  private isAvailable(feature: string): boolean {
+  isAvailable(feature: string): boolean {
     return (AVAILABLE_EXPERIMENTS as readonly string[]).includes(feature);
   }
 }
 
 export const experimentRegistry = new ExperimentRegistry();
+
+/**
+ * Check if an infrastructure-level experiment (e.g. "multiplexer") is enabled via env var.
+ * Infrastructure experiments are gated at startup, not session-toggleable.
+ */
+export function isInfraExperimentEnabled(
+  feature: string,
+  config: { enabledExperiments?: string[] }
+): boolean {
+  if (!config.enabledExperiments) return false;
+  return config.enabledExperiments.includes(feature);
+}
+
+/**
+ * Pre-enable session features listed in the env var config.
+ * Silently skips infra features (like "multiplexer") that aren't in AVAILABLE_EXPERIMENTS.
+ */
+export function applyInitialState(config: { enabledExperiments?: string[] }): void {
+  if (!config.enabledExperiments) return;
+  for (const feature of config.enabledExperiments) {
+    if (experimentRegistry.isAvailable(feature)) {
+      experimentRegistry.enable(feature);
+    }
+  }
+}

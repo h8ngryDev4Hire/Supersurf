@@ -17,6 +17,11 @@ import { startScriptMode } from './stdio';
 const VERSION = '0.1.0';
 
 function resolveConfig(options: any): BackendConfig {
+  const envExperiments = process.env.SUPERSURF_EXPERIMENTS;
+  const enabledExperiments = envExperiments
+    ? envExperiments.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+
   return {
     debug: options.debug === true,
     port: options.port || 5555,
@@ -24,6 +29,7 @@ function resolveConfig(options: any): BackendConfig {
       name: 'SuperSurf',
       version: VERSION,
     },
+    enabledExperiments,
   };
 }
 

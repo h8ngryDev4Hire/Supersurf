@@ -175,8 +175,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // ── Register command handlers ──
 
   // getTabs
-  wsConnection.registerCommandHandler('getTabs', async () => {
-    return await tabHandlers.getTabs();
+  wsConnection.registerCommandHandler('getTabs', async (params) => {
+    return await tabHandlers.getTabs(params);
   });
 
   // createTab
@@ -191,7 +191,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   // closeTab
   wsConnection.registerCommandHandler('closeTab', async (params) => {
-    return await tabHandlers.closeTab(params?.index);
+    return await tabHandlers.closeTab(params);
+  });
+
+  // sessionDisconnect — multiplexer signals a session has left
+  wsConnection.registerCommandHandler('sessionDisconnect', async (params) => {
+    return await tabHandlers.handleSessionDisconnect(params.sessionId);
   });
 
   // navigate

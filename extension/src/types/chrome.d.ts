@@ -48,6 +48,7 @@ declare namespace chrome {
       url?: string;
       windowId: number;
       active: boolean;
+      groupId: number; // -1 when ungrouped
     }
     function query(queryInfo: Record<string, any>): Promise<Tab[]>;
     function create(createProperties: Record<string, any>): Promise<Tab>;
@@ -55,6 +56,8 @@ declare namespace chrome {
     function remove(tabId: number): Promise<void>;
     function get(tabId: number): Promise<Tab>;
     function reload(tabId: number): Promise<void>;
+    function group(options: { tabIds: number | number[]; groupId?: number; createProperties?: { windowId?: number } }): Promise<number>;
+    function ungroup(tabIds: number | number[]): Promise<void>;
     const onActivated: {
       addListener(callback: (activeInfo: { tabId: number; windowId: number }) => void): void;
     };
@@ -63,6 +66,31 @@ declare namespace chrome {
     };
     const onUpdated: {
       addListener(callback: (tabId: number, changeInfo: any, tab: Tab) => void): void;
+    };
+  }
+
+  namespace tabGroups {
+    type Color = 'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange';
+    interface TabGroup {
+      id: number;
+      collapsed: boolean;
+      color: Color;
+      title?: string;
+      windowId: number;
+    }
+    const TAB_GROUP_ID_NONE: -1;
+    function get(groupId: number): Promise<TabGroup>;
+    function update(groupId: number, updateProperties: { title?: string; color?: Color; collapsed?: boolean }): Promise<TabGroup>;
+    function query(queryInfo: { title?: string; color?: Color; windowId?: number; collapsed?: boolean }): Promise<TabGroup[]>;
+    function move(groupId: number, moveProperties: { index: number; windowId?: number }): Promise<TabGroup>;
+    const onCreated: {
+      addListener(callback: (group: TabGroup) => void): void;
+    };
+    const onRemoved: {
+      addListener(callback: (group: TabGroup) => void): void;
+    };
+    const onUpdated: {
+      addListener(callback: (group: TabGroup) => void): void;
     };
   }
 

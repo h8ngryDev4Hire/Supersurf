@@ -12,7 +12,8 @@
     "management",
     "webRequest",
     "webNavigation",
-    "scripting"
+    "scripting",
+    "tabGroups"
   ],
   "host_permissions": [
     "<all_urls>"

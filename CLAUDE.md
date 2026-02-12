@@ -46,10 +46,10 @@ AI Agent → stdio/MCP → Server (Node.js) → WebSocket (localhost:5555) → C
 | File | Role |
 |------|------|
 | `cli.ts` | Entry point. Commander CLI. In debug mode, runs as wrapper that restarts child on exit code 42 (hot reload). |
-| `backend.ts` | `StatefulBackend` — state machine (`passive` → `active` → `connected`), tool routing, status headers prepended to every response. |
-| `tools.ts` | `UnifiedBackend` — all ~20 browser tool implementations (~66KB). CDP forwarding, element resolution, screenshots. |
-| `extensionServer.ts` | WebSocket server on port 5555. JSON-RPC 2.0 request/response with 30s timeout. |
-| `transport.ts` | `DirectTransport` wraps ExtensionServer. Abstraction layer for future transport modes. |
+| `backend.ts` | `ConnectionManager` — state machine (`passive` → `active` → `connected`), tool routing, status headers prepended to every response. |
+| `tools.ts` | `BrowserBridge` — orchestrator for browser tools. CDP/eval helpers, element resolution, dispatches to `tools/` modules. |
+| `tools/` | Modular tool handlers: `schemas.ts` (tool definitions), `interaction.ts` (click/type/scroll), `content.ts` (snapshot/lookup/extract), `styles.ts` (CSS inspection), `screenshot.ts` (capture/PDF), `network.ts` (traffic/console), `navigation.ts` (tabs/navigate), `forms.ts` (fill/drag/secure-fill), `misc.ts` (window/dialog/evaluate/verify/extensions/perf). |
+| `bridge.ts` | `ExtensionServer` — WebSocket server on port 5555. JSON-RPC 2.0 request/response with 30s timeout. |
 
 ### Extension (`extension/src/`)
 
@@ -72,13 +72,13 @@ AI Agent → stdio/MCP → Server (Node.js) → WebSocket (localhost:5555) → C
 
 `backend.ts` lazy-imports `tools.ts` to avoid circular dependencies:
 ```typescript
-let UnifiedBackend: any = null;
-async function getUnifiedBackend() {
-  if (!UnifiedBackend) {
+let BrowserBridge: any = null;
+async function getBrowserBridge() {
+  if (!BrowserBridge) {
     const mod = await import('./tools');
-    UnifiedBackend = mod.UnifiedBackend;
+    BrowserBridge = mod.BrowserBridge;
   }
-  return UnifiedBackend;
+  return BrowserBridge;
 }
 ```
 

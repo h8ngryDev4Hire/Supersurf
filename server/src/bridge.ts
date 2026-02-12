@@ -10,12 +10,24 @@ import { createLog } from './logger';
 
 const log = createLog('[WS]');
 
+export interface IExtensionTransport {
+  sendCmd(method: string, params?: Record<string, unknown>, timeout?: number): Promise<any>;
+  readonly connected: boolean;
+  readonly browser: string;
+  readonly buildTime: string | null;
+  onReconnect: (() => void) | null;
+  onTabInfoUpdate: ((tabInfo: any) => void) | null;
+  notifyClientId(clientId: string): void;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
+
 interface InflightRequest {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
 }
 
-export class ExtensionServer {
+export class ExtensionServer implements IExtensionTransport {
   private port: number;
   private host: string;
   private httpServer: http.Server | null = null;
@@ -28,6 +40,7 @@ export class ExtensionServer {
 
   onReconnect: (() => void) | null = null;
   onTabInfoUpdate: ((tabInfo: any) => void) | null = null;
+  onRawConnection: ((ws: WebSocket, request: http.IncomingMessage) => boolean) | null = null;
 
   constructor(port: number = 5555, host: string = '127.0.0.1') {
     this.port = port;
@@ -60,8 +73,14 @@ export class ExtensionServer {
         reject(error);
       });
 
-      this.wss.on('connection', (ws) => {
+      this.wss.on('connection', (ws, request) => {
         log('Extension connection attempt');
+
+        // Delegate to raw connection handler if set (used by multiplexer)
+        if (this.onRawConnection) {
+          const handled = this.onRawConnection(ws, request);
+          if (handled) return;
+        }
 
         // Reject if already connected
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
