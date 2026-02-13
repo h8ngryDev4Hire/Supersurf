@@ -18,13 +18,15 @@ vi.mock('../src/experimental/index', () => ({
     enable: vi.fn(),
     disable: vi.fn(),
     reset: vi.fn(),
-    listAvailable: vi.fn().mockReturnValue(['page_diffing', 'smart_waiting']),
-    getStates: vi.fn().mockReturnValue({ page_diffing: false, smart_waiting: false }),
+    listAvailable: vi.fn().mockReturnValue(['page_diffing', 'smart_waiting', 'storage_inspection']),
+    getStates: vi.fn().mockReturnValue({ page_diffing: false, smart_waiting: false, storage_inspection: false }),
     isAvailable: vi.fn().mockReturnValue(true),
   },
   diffSnapshots: vi.fn().mockReturnValue({ added: [], removed: [], countDelta: 0 }),
   calculateConfidence: vi.fn().mockReturnValue(1.0),
   formatDiffSection: vi.fn().mockReturnValue(''),
+  getExperimentalToolSchemas: vi.fn().mockReturnValue([]),
+  callExperimentalTool: vi.fn().mockReturnValue(null),
 }));
 
 // ── Mock extension transport ──

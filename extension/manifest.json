@@ -13,7 +13,8 @@
     "webRequest",
     "webNavigation",
     "scripting",
-    "tabGroups"
+    "tabGroups",
+    "downloads"
   ],
   "host_permissions": [
     "<all_urls>"

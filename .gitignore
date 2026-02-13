@@ -1,11 +1,8 @@
-# Reference project — not used at runtime
-blueprint-mcp/
-
 # Dependencies
 node_modules/
 
-# Build output
-dist/
+# source files
+src/
 
 # Logs
 logs/

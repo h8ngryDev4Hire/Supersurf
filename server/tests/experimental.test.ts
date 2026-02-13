@@ -56,7 +56,8 @@ describe('ExperimentRegistry', () => {
       const available = experimentRegistry.listAvailable();
       expect(available).toContain('page_diffing');
       expect(available).toContain('smart_waiting');
-      expect(available.length).toBe(2);
+      expect(available).toContain('storage_inspection');
+      expect(available.length).toBe(3);
     });
   });
 
@@ -64,7 +65,7 @@ describe('ExperimentRegistry', () => {
     it('returns state map for all experiments', () => {
       experimentRegistry.enable('smart_waiting');
       const states = experimentRegistry.getStates();
-      expect(states).toEqual({ page_diffing: false, smart_waiting: true });
+      expect(states).toEqual({ page_diffing: false, smart_waiting: true, storage_inspection: false });
     });
   });
 
