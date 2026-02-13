@@ -1,3 +1,8 @@
+# agent data
+CLAUDE.md
+knowledge/
+.claude/
+
 # Dependencies
 node_modules/
 
@@ -23,9 +28,3 @@ Thumbs.db
 # Lock files (regenerated on install)
 package-lock.json
 
-# IDE
-.vscode/
-.idea/
-
-# Debug / temp
-tmp/
