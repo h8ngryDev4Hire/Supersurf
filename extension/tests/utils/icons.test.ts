@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createMockChrome } from '../__mocks__/chrome';
 import { IconManager } from '../../src/utils/icons';
+import { SessionContext } from '../../src/session-context';
 
 function createMockLogger() {
   return {
@@ -15,12 +16,14 @@ function createMockLogger() {
 describe('IconManager', () => {
   let mockChrome: ReturnType<typeof createMockChrome>;
   let mockLogger: ReturnType<typeof createMockLogger>;
+  let sessionContext: SessionContext;
   let iconManager: IconManager;
 
   beforeEach(() => {
     mockChrome = createMockChrome();
     mockLogger = createMockLogger();
-    iconManager = new IconManager(mockChrome, mockLogger);
+    sessionContext = new SessionContext();
+    iconManager = new IconManager(mockChrome, mockLogger, sessionContext);
   });
 
   describe('init()', () => {

@@ -13,6 +13,8 @@ import { ConsoleHandler } from './handlers/console.js';
 import { DownloadHandler } from './handlers/downloads.js';
 import { wrapWithUnwrap, shouldUnwrap } from './utils/unwrap.js';
 import { ExperimentalFeatures } from './experimental/index.js';
+import { registerMouseHandlers, handleIdleDrift } from './experimental/mouse-humanization.js';
+import { SessionContext } from './session-context.js';
 // chrome.debugger is a reserved word — access via bracket notation
 const chromeDebugger = chrome['debugger'];
 // Top-level variables
@@ -51,8 +53,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await logger.init(chrome);
     const manifest = chrome.runtime.getManifest();
     logger.logAlways(`SuperSurf v${manifest.version}`);
-    const iconManager = new IconManager(chrome, logger);
-    tabHandlers = new TabHandlers(chrome, logger, iconManager);
+    // Centralized state
+    const sessionContext = new SessionContext();
+    const iconManager = new IconManager(chrome, logger, sessionContext);
+    tabHandlers = new TabHandlers(chrome, logger, iconManager, sessionContext);
     const networkTracker = new NetworkTracker(chrome, logger);
     const dialogHandler = new DialogHandler(chrome, logger);
     const consoleHandler = new ConsoleHandler(chrome, logger);
@@ -64,8 +68,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     networkTracker.init();
     // State
     let techStackInfo = {};
-    let debuggerAttached = false;
-    let currentDebuggerTabId = null;
     const cdpNetworkRequests = new Map();
     const MAX_CDP_REQUESTS = 500;
     // Keepalive + reconnect alarms
@@ -84,13 +86,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 logger.log('[Background] Reconnect alarm fired');
                 wsConnection.handleReconnectAlarm();
             }
+            else if (alarm.name === 'mouse-idle-drift') {
+                handleIdleDrift(sessionContext, cdp).catch(() => { });
+            }
         });
     }
     // CDP debugger events for network tracking
     chromeDebugger.onEvent.addListener((source, method, params) => {
         if (!method.startsWith('Network.') && !method.startsWith('Runtime.'))
             return;
-        if (!currentDebuggerTabId || source.tabId !== currentDebuggerTabId)
+        if (!sessionContext.currentDebuggerTabId || source.tabId !== sessionContext.currentDebuggerTabId)
             return;
         try {
             if (method === 'Network.requestWillBeSent') {
@@ -129,9 +134,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         }
     });
     chromeDebugger.onDetach.addListener((source) => {
-        if (source.tabId === currentDebuggerTabId) {
-            debuggerAttached = false;
-            currentDebuggerTabId = null;
+        if (source.tabId === sessionContext.currentDebuggerTabId) {
+            sessionContext.debuggerAttached = false;
+            sessionContext.currentDebuggerTabId = null;
             logger.log('[Background] Debugger detached');
         }
     });
@@ -144,17 +149,17 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     });
     // ── Helper: attach debugger ──
     async function ensureDebugger(tabId) {
-        if (debuggerAttached && currentDebuggerTabId === tabId)
+        if (sessionContext.debuggerAttached && sessionContext.currentDebuggerTabId === tabId)
             return;
-        if (debuggerAttached && currentDebuggerTabId !== tabId) {
+        if (sessionContext.debuggerAttached && sessionContext.currentDebuggerTabId !== tabId) {
             try {
-                await chromeDebugger.detach({ tabId: currentDebuggerTabId });
+                await chromeDebugger.detach({ tabId: sessionContext.currentDebuggerTabId });
             }
             catch { /* ignore */ }
         }
         await chromeDebugger.attach({ tabId }, '1.3');
-        debuggerAttached = true;
-        currentDebuggerTabId = tabId;
+        sessionContext.debuggerAttached = true;
+        sessionContext.currentDebuggerTabId = tabId;
         await chromeDebugger.sendCommand({ tabId }, 'Network.enable', {});
         await chromeDebugger.sendCommand({ tabId }, 'DOM.enable', {});
         await chromeDebugger.sendCommand({ tabId }, 'CSS.enable', {});
@@ -388,7 +393,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         return results?.[0]?.result || { success: false, error: 'Script execution failed' };
     });
     // ── Experimental feature handlers ──
-    ExperimentalFeatures.registerHandlers(wsConnection, tabHandlers, networkTracker);
+    ExperimentalFeatures.registerHandlers(wsConnection, tabHandlers, networkTracker, sessionContext);
+    registerMouseHandlers(wsConnection, sessionContext, cdp);
     // ── Popup message handler ──
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (message.type === 'getStatus') {

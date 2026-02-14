@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createMockChrome } from '../__mocks__/chrome';
 import { TabHandlers } from '../../src/handlers/tabs';
+import { SessionContext } from '../../src/session-context';
 
 function createMockLogger() {
   return {
@@ -30,13 +31,15 @@ describe('TabHandlers', () => {
   let mockChrome: ReturnType<typeof createMockChrome>;
   let mockLogger: ReturnType<typeof createMockLogger>;
   let mockIconManager: ReturnType<typeof createMockIconManager>;
+  let sessionContext: SessionContext;
   let tabs: TabHandlers;
 
   beforeEach(() => {
     mockChrome = createMockChrome();
     mockLogger = createMockLogger();
     mockIconManager = createMockIconManager();
-    tabs = new TabHandlers(mockChrome, mockLogger, mockIconManager);
+    sessionContext = new SessionContext();
+    tabs = new TabHandlers(mockChrome, mockLogger, mockIconManager, sessionContext);
   });
 
   describe('getAttachedTabId()', () => {

@@ -59,6 +59,9 @@ async function onNavigate(ctx, args, options) {
                 }
                 catch { /* fall through — page may already be ready */ }
             }
+            else {
+                await ctx.sleep(1500);
+            }
             break;
         case 'back':
             await ctx.eval('window.history.back()');
@@ -100,6 +103,9 @@ async function onNavigate(ctx, args, options) {
                     await ctx.ext.sendCmd('waitForReady', { timeout: 10000 });
                 }
                 catch { /* fall through */ }
+            }
+            else {
+                await ctx.sleep(1500);
             }
             break;
         default:

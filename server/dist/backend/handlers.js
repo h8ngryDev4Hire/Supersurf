@@ -44,6 +44,7 @@ exports.onReloadMCP = onReloadMCP;
 const bridge_1 = require("../bridge");
 const logger_1 = require("../logger");
 const index_1 = require("../experimental/index");
+const index_2 = require("../experimental/mouse-humanization/index");
 const log = (0, logger_1.createLog)('[Conn]');
 // Forward-declare BrowserBridge import (lazy to avoid circular deps)
 let BrowserBridge = null;
@@ -94,6 +95,12 @@ async function onEnable(mgr, args = {}, options = {}) {
     }
     mgr.clientId = args.client_id.trim();
     log('Client ID set to:', mgr.clientId);
+    // Start session log file
+    const reg = (0, logger_1.getRegistry)();
+    if (reg.debugMode) {
+        const sessionLogger = reg.setSessionLog(mgr.clientId);
+        log('Session log:', sessionLogger.logFilePath);
+    }
     try {
         log('Starting extension server...');
         const port = mgr.config.port || 5555;
@@ -144,8 +151,8 @@ async function onEnable(mgr, args = {}, options = {}) {
         // Notify MCP client that tool list changed
         mgr.notifyToolsListChanged().catch((err) => log('Error sending notification:', err));
         // Notify client about available experimental features
-        mgr.sendLogNotification('info', 'SuperSurf experimental features available: page_diffing (reduces token cost by returning DOM diffs instead of full re-reads), smart_waiting (adaptive DOM stability detection). ' +
-            'Use the experimental_features tool to toggle them, or set SUPERSURF_EXPERIMENTS=page_diffing,smart_waiting in your environment to pre-enable on startup.', 'experiments').catch(() => { });
+        mgr.sendLogNotification('info', 'SuperSurf experimental features available: page_diffing (reduces token cost by returning DOM diffs instead of full re-reads), smart_waiting (adaptive DOM stability detection), mouse_humanization (human-like cursor trajectories with overshoot correction). ' +
+            'Use the experimental_features tool to toggle them, or set SUPERSURF_EXPERIMENTS=page_diffing,smart_waiting,mouse_humanization in your environment to pre-enable on startup.', 'experiments').catch(() => { });
         if (options.rawResult) {
             return {
                 success: true,
@@ -221,9 +228,14 @@ async function onDisable(mgr, options = {}) {
         await mgr.extensionServer.stop();
         mgr.extensionServer = null;
     }
+    // Close session log
+    if (mgr.clientId) {
+        (0, logger_1.getRegistry)().clearSessionLog(mgr.clientId);
+    }
     mgr.state = 'passive';
     mgr.connectedBrowserName = null;
     mgr.attachedTab = null;
+    (0, index_2.destroySession)('_default');
     index_1.experimentRegistry.reset();
     mgr.notifyToolsListChanged().catch((err) => log('Error sending notification:', err));
     if (options.rawResult) {
@@ -305,9 +317,21 @@ async function onExperimentalFeatures(mgr, args = {}, options = {}) {
         const value = args[key];
         if (value === true) {
             index_1.experimentRegistry.enable(key);
+            if (key === 'mouse_humanization') {
+                (0, index_2.initSession)('_default');
+                if (mgr.extensionServer) {
+                    mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: true }).catch(() => { });
+                }
+            }
         }
         else if (value === false) {
             index_1.experimentRegistry.disable(key);
+            if (key === 'mouse_humanization') {
+                (0, index_2.destroySession)('_default');
+                if (mgr.extensionServer) {
+                    mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: false }).catch(() => { });
+                }
+            }
         }
     }
     const states = index_1.experimentRegistry.getStates();

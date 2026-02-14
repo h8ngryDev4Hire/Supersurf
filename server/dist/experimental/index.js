@@ -14,7 +14,7 @@ Object.defineProperty(exports, "diffSnapshots", { enumerable: true, get: functio
 Object.defineProperty(exports, "calculateConfidence", { enumerable: true, get: function () { return page_diffing_1.calculateConfidence; } });
 Object.defineProperty(exports, "formatDiffSection", { enumerable: true, get: function () { return page_diffing_1.formatDiffSection; } });
 const storage_inspection_1 = require("./storage-inspection");
-const AVAILABLE_EXPERIMENTS = ['page_diffing', 'smart_waiting', 'storage_inspection'];
+const AVAILABLE_EXPERIMENTS = ['page_diffing', 'smart_waiting', 'storage_inspection', 'mouse_humanization'];
 class ExperimentRegistry {
     _enabled = new Map();
     enable(feature) {

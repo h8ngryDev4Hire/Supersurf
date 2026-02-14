@@ -2,12 +2,16 @@
 CLAUDE.md
 knowledge/
 .claude/
+research/
 
 # Dependencies
 node_modules/
 
 # source files
-src/
+#src/
+
+# test files
+tests/
 
 # Logs
 logs/

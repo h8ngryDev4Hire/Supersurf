@@ -28,6 +28,13 @@ export declare class BrowserBridge {
     /** Convert selector string to JS querySelector expression, handling :has-text() */
     private getSelectorExpression;
     listTools(): Promise<ToolSchema[]>;
+    /** Tools that support the `screenshot` param for inline post-action capture. */
+    private static SCREENSHOT_ELIGIBLE;
+    /**
+     * If `args.screenshot` is true and the tool is eligible, append a screenshot
+     * image block to the result. Skips for rawResult mode and error results.
+     */
+    private maybeAppendScreenshot;
     callTool(name: string, args?: Record<string, unknown>, options?: {
         rawResult?: boolean;
     }): Promise<any>;

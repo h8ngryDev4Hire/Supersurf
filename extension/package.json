@@ -5,7 +5,7 @@
   "description": "SuperSurf Chrome extension for browser automation",
   "license": "Apache-2.0",
   "scripts": {
-    "build": "tsc && node build.js",
+    "build": "tsc && npx tsx build.ts",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest"

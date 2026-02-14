@@ -120,7 +120,6 @@ class ExtensionServer {
     handleMessage(data) {
         try {
             const message = JSON.parse(data.toString());
-            log('Received from extension:', message.method || 'response');
             // Response (has id, no method)
             if (message.id !== undefined && !message.method) {
                 const pending = this.inflight.get(message.id);
@@ -166,6 +165,13 @@ class ExtensionServer {
             throw new Error('Extension not connected. Open the extension popup and click "Enable".');
         }
         const id = crypto_1.default.randomUUID().slice(0, 8);
+        // Log outgoing command with params
+        if (method === 'forwardCDPCommand') {
+            log(`→ ${method}:`, params.method, params.params ?? {});
+        }
+        else {
+            log(`→ ${method}`, params);
+        }
         return new Promise((resolve, reject) => {
             const timeoutId = setTimeout(() => {
                 this.inflight.delete(id);
@@ -174,15 +180,16 @@ class ExtensionServer {
             this.inflight.set(id, {
                 resolve: (result) => {
                     clearTimeout(timeoutId);
+                    log(`← ${method}`, result);
                     resolve(result);
                 },
                 reject: (error) => {
                     clearTimeout(timeoutId);
+                    log(`✗ ${method}:`, error.message);
                     reject(error);
                 },
             });
             const message = { jsonrpc: '2.0', id, method, params };
-            log('Sending to extension:', method);
             this.socket.send(JSON.stringify(message));
         });
     }

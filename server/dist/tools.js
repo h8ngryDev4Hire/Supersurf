@@ -179,6 +179,39 @@ class BrowserBridge {
     async listTools() {
         return [...(0, schemas_1.getToolSchemas)(), ...(0, index_1.getExperimentalToolSchemas)()];
     }
+    // ─── Inline Screenshot ─────────────────────────────────────
+    /** Tools that support the `screenshot` param for inline post-action capture. */
+    static SCREENSHOT_ELIGIBLE = new Set([
+        'browser_interact', 'browser_navigate', 'browser_fill_form',
+        'browser_drag', 'browser_handle_dialog', 'browser_window',
+    ]);
+    /**
+     * If `args.screenshot` is true and the tool is eligible, append a screenshot
+     * image block to the result. Skips for rawResult mode and error results.
+     */
+    async maybeAppendScreenshot(name, args, options, result) {
+        if (!args.screenshot || !BrowserBridge.SCREENSHOT_ELIGIBLE.has(name))
+            return result;
+        if (options.rawResult || result?.isError)
+            return result;
+        try {
+            const screenshotResult = await (0, screenshot_1.onScreenshot)(this.ctx, {}, { rawResult: true });
+            if (screenshotResult?.data) {
+                const imageBlock = {
+                    type: 'image',
+                    data: screenshotResult.data,
+                    mimeType: screenshotResult.mimeType || 'image/jpeg',
+                };
+                if (result?.content && Array.isArray(result.content)) {
+                    result.content.push(imageBlock);
+                }
+            }
+        }
+        catch (e) {
+            log('Inline screenshot failed:', e.message);
+        }
+        return result;
+    }
     // ─── Tool Dispatch ───────────────────────────────────────────
     async callTool(name, args = {}, options = {}) {
         log(`callTool(${name})`);
@@ -190,38 +223,88 @@ class BrowserBridge {
                 '3. Open the extension popup and verify it shows "Connected"', options);
         }
         const ctx = this.ctx;
+        let result;
         try {
             switch (name) {
-                case 'browser_tabs': return await (0, navigation_1.onBrowserTabs)(ctx, args, options);
-                case 'browser_navigate': return await (0, navigation_1.onNavigate)(ctx, args, options);
-                case 'browser_interact': return await (0, interaction_1.onInteract)(ctx, args, options);
-                case 'browser_snapshot': return await (0, content_1.onSnapshot)(ctx, options);
-                case 'browser_lookup': return await (0, content_1.onLookup)(ctx, args, options);
-                case 'browser_extract_content': return await (0, content_1.onExtractContent)(ctx, args, options);
-                case 'browser_get_element_styles': return await (0, styles_1.onGetElementStyles)(ctx, args, options);
-                case 'browser_take_screenshot': return await (0, screenshot_1.onScreenshot)(ctx, args, options);
-                case 'browser_evaluate': return await (0, misc_1.onEvaluate)(ctx, args, options);
-                case 'browser_console_messages': return await (0, network_1.onConsoleMessages)(ctx, args, options);
-                case 'browser_fill_form': return await (0, forms_1.onFillForm)(ctx, args, options);
-                case 'browser_drag': return await (0, forms_1.onDrag)(ctx, args, options);
-                case 'browser_window': return await (0, misc_1.onWindow)(ctx, args, options);
-                case 'browser_verify_text_visible': return await (0, misc_1.onVerifyTextVisible)(ctx, args, options);
-                case 'browser_verify_element_visible': return await (0, misc_1.onVerifyElementVisible)(ctx, args, options);
-                case 'browser_network_requests': return await (0, network_1.onNetworkRequests)(ctx, args, options);
-                case 'browser_pdf_save': return await (0, screenshot_1.onPdfSave)(ctx, args, options);
-                case 'browser_handle_dialog': return await (0, misc_1.onDialog)(ctx, args, options);
-                case 'browser_list_extensions': return await (0, misc_1.onListExtensions)(ctx, options);
-                case 'browser_reload_extensions': return await (0, misc_1.onReloadExtensions)(ctx, args, options);
-                case 'browser_performance_metrics': return await (0, misc_1.onPerformanceMetrics)(ctx, options);
-                case 'browser_download': return await (0, downloads_1.onBrowserDownload)(ctx, args, options);
-                case 'secure_fill': return await (0, forms_1.onSecureFill)(ctx, args, options);
+                case 'browser_tabs':
+                    result = await (0, navigation_1.onBrowserTabs)(ctx, args, options);
+                    break;
+                case 'browser_navigate':
+                    result = await (0, navigation_1.onNavigate)(ctx, args, options);
+                    break;
+                case 'browser_interact':
+                    result = await (0, interaction_1.onInteract)(ctx, args, options);
+                    break;
+                case 'browser_snapshot':
+                    result = await (0, content_1.onSnapshot)(ctx, options);
+                    break;
+                case 'browser_lookup':
+                    result = await (0, content_1.onLookup)(ctx, args, options);
+                    break;
+                case 'browser_extract_content':
+                    result = await (0, content_1.onExtractContent)(ctx, args, options);
+                    break;
+                case 'browser_get_element_styles':
+                    result = await (0, styles_1.onGetElementStyles)(ctx, args, options);
+                    break;
+                case 'browser_take_screenshot':
+                    result = await (0, screenshot_1.onScreenshot)(ctx, args, options);
+                    break;
+                case 'browser_evaluate':
+                    result = await (0, misc_1.onEvaluate)(ctx, args, options);
+                    break;
+                case 'browser_console_messages':
+                    result = await (0, network_1.onConsoleMessages)(ctx, args, options);
+                    break;
+                case 'browser_fill_form':
+                    result = await (0, forms_1.onFillForm)(ctx, args, options);
+                    break;
+                case 'browser_drag':
+                    result = await (0, forms_1.onDrag)(ctx, args, options);
+                    break;
+                case 'browser_window':
+                    result = await (0, misc_1.onWindow)(ctx, args, options);
+                    break;
+                case 'browser_verify_text_visible':
+                    result = await (0, misc_1.onVerifyTextVisible)(ctx, args, options);
+                    break;
+                case 'browser_verify_element_visible':
+                    result = await (0, misc_1.onVerifyElementVisible)(ctx, args, options);
+                    break;
+                case 'browser_network_requests':
+                    result = await (0, network_1.onNetworkRequests)(ctx, args, options);
+                    break;
+                case 'browser_pdf_save':
+                    result = await (0, screenshot_1.onPdfSave)(ctx, args, options);
+                    break;
+                case 'browser_handle_dialog':
+                    result = await (0, misc_1.onDialog)(ctx, args, options);
+                    break;
+                case 'browser_list_extensions':
+                    result = await (0, misc_1.onListExtensions)(ctx, options);
+                    break;
+                case 'browser_reload_extensions':
+                    result = await (0, misc_1.onReloadExtensions)(ctx, args, options);
+                    break;
+                case 'browser_performance_metrics':
+                    result = await (0, misc_1.onPerformanceMetrics)(ctx, options);
+                    break;
+                case 'browser_download':
+                    result = await (0, downloads_1.onBrowserDownload)(ctx, args, options);
+                    break;
+                case 'secure_fill':
+                    result = await (0, forms_1.onSecureFill)(ctx, args, options);
+                    break;
                 default: {
                     const experimentalResult = await (0, index_1.callExperimentalTool)(name, ctx, args, options);
-                    if (experimentalResult !== null)
-                        return experimentalResult;
+                    if (experimentalResult !== null) {
+                        result = experimentalResult;
+                        break;
+                    }
                     return this.error(`Unknown tool: ${name}`, options);
                 }
             }
+            return await this.maybeAppendScreenshot(name, args, options, result);
         }
         catch (error) {
             log(`Tool error (${name}):`, error.message);

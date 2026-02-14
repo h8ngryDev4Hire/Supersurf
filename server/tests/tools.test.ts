@@ -168,6 +168,67 @@ describe('BrowserBridge', () => {
     });
   });
 
+  // ── inline screenshot ──
+
+  describe('inline screenshot', () => {
+    it('appends image block when screenshot=true on eligible tool', async () => {
+      // First call: navigate handler, second call: screenshot capture
+      mockExt.sendCmd
+        .mockResolvedValueOnce({ success: true })
+        .mockResolvedValueOnce({ data: 'fakeBase64Data', mimeType: 'image/jpeg' });
+
+      const result = await bridge.callTool('browser_navigate', {
+        action: 'url',
+        url: 'https://example.com',
+        screenshot: true,
+      });
+
+      expect(result.content.length).toBeGreaterThanOrEqual(2);
+      const imageBlock = result.content.find((c: any) => c.type === 'image');
+      expect(imageBlock).toBeDefined();
+      expect(imageBlock.data).toBeTruthy();
+      expect(imageBlock.mimeType).toContain('image/');
+    });
+
+    it('does not append screenshot when screenshot=false', async () => {
+      mockExt.sendCmd.mockResolvedValue({ success: true });
+
+      const result = await bridge.callTool('browser_navigate', {
+        action: 'url',
+        url: 'https://example.com',
+        screenshot: false,
+      });
+
+      const imageBlock = result.content?.find((c: any) => c.type === 'image');
+      expect(imageBlock).toBeUndefined();
+    });
+
+    it('does not append screenshot on ineligible tool', async () => {
+      mockExt.sendCmd
+        .mockResolvedValueOnce({ nodes: [] })
+        .mockResolvedValueOnce({ data: 'fakeBase64Data', mimeType: 'image/jpeg' });
+
+      const result = await bridge.callTool('browser_snapshot', { screenshot: true });
+
+      const imageBlock = result.content?.find((c: any) => c.type === 'image');
+      expect(imageBlock).toBeUndefined();
+    });
+
+    it('skips screenshot on error results', async () => {
+      mockExt.sendCmd.mockRejectedValue(new Error('Something broke'));
+
+      const result = await bridge.callTool('browser_navigate', {
+        action: 'url',
+        url: 'https://example.com',
+        screenshot: true,
+      });
+
+      expect(result.isError).toBe(true);
+      const imageBlock = result.content?.find((c: any) => c.type === 'image');
+      expect(imageBlock).toBeUndefined();
+    });
+  });
+
   // ── serverClosed ──
 
   describe('serverClosed()', () => {

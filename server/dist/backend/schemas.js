@@ -54,13 +54,15 @@ function getConnectionToolSchemas() {
             description: 'Toggle experimental features for this session. Available experiments:\n' +
                 '- **page_diffing**: After browser_interact, returns only DOM changes instead of requiring a full re-read. Includes a confidence score.\n' +
                 '- **smart_waiting**: Replaces fixed navigation delays with adaptive DOM stability + network idle detection.\n' +
-                '- **storage_inspection**: Enables the `browser_storage` tool for inspecting/modifying localStorage and sessionStorage.',
+                '- **storage_inspection**: Enables the `browser_storage` tool for inspecting/modifying localStorage and sessionStorage.\n' +
+                '- **mouse_humanization**: Replaces instant cursor teleportation with human-like Bezier trajectories, overshoot correction, and idle micro-movements.',
             inputSchema: {
                 type: 'object',
                 properties: {
                     page_diffing: { type: 'boolean', description: 'Enable/disable page diffing experiment' },
                     smart_waiting: { type: 'boolean', description: 'Enable/disable smart waiting experiment' },
                     storage_inspection: { type: 'boolean', description: 'Enable/disable storage inspection experiment' },
+                    mouse_humanization: { type: 'boolean', description: 'Enable/disable mouse humanization experiment' },
                 },
             },
             annotations: {

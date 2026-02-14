@@ -10,6 +10,12 @@ vi.mock('../src/logger', () => ({
     enable: vi.fn(),
     disable: vi.fn(),
   }),
+  getRegistry: () => ({
+    debugMode: false,
+    setSessionLog: vi.fn().mockReturnValue({ logFilePath: '/tmp/test.log', enable: vi.fn(), log: vi.fn() }),
+    clearSessionLog: vi.fn(),
+    getLogger: vi.fn().mockReturnValue({ log: vi.fn(), enable: vi.fn(), disable: vi.fn() }),
+  }),
   createLog: () => (..._args: unknown[]) => {},
 }));
 

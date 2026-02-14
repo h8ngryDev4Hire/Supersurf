@@ -19,7 +19,6 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
     "commander": "^14.0.1",
-    "env-paths": "^2.2.1",
     "image-size": "^2.0.2",
     "jsonpath-plus": "^10.3.0",
     "sharp": "^0.34.4",

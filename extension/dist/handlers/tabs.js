@@ -9,9 +9,7 @@ export class TabHandlers {
     browser;
     logger;
     iconManager;
-    attachedTabId = null;
-    stealthMode = false;
-    stealthTabs = new Map();
+    ctx;
     techStackInfo = new Map();
     // Session → tab group isolation
     sessionGroups = new Map(); // sessionId → Chrome groupId
@@ -19,10 +17,11 @@ export class TabHandlers {
     colorIndex = 0;
     consoleInjector = null;
     dialogInjector = null;
-    constructor(browserAPI, logger, iconManager) {
+    constructor(browserAPI, logger, iconManager, sessionContext) {
         this.browser = browserAPI;
         this.logger = logger;
         this.iconManager = iconManager;
+        this.ctx = sessionContext;
         // Listen for tab close
         this.browser.tabs.onRemoved.addListener((tabId) => this.handleTabClosed(tabId));
         // Clean up session→group maps if a group is removed externally
@@ -35,7 +34,7 @@ export class TabHandlers {
         this.dialogInjector = fn;
     }
     getAttachedTabId() {
-        return this.attachedTabId;
+        return this.ctx.attachedTabId;
     }
     setTechStackInfo(tabId, techStack) {
         this.techStackInfo.set(tabId, techStack);
@@ -135,22 +134,22 @@ export class TabHandlers {
                 title: tab.title || 'Untitled',
                 url,
                 automatable,
-                attached: tab.id === this.attachedTabId,
+                attached: tab.id === this.ctx.attachedTabId,
                 groupId: tab.groupId ?? -1,
-                stealthMode: this.stealthTabs.get(tab.id) ?? null,
+                stealthMode: this.ctx.stealthTabs.get(tab.id) ?? null,
                 techStack: this.techStackInfo.get(tab.id) || null,
             };
         });
-        return { tabs, attachedTabId: this.attachedTabId };
+        return { tabs, attachedTabId: this.ctx.attachedTabId };
     }
     async createTab(params) {
         const url = params.url || 'about:blank';
         const activate = params.activate !== false;
         const stealth = params.stealth || false;
         const tab = await this.browser.tabs.create({ url, active: activate });
-        this.attachedTabId = tab.id;
-        this.stealthMode = stealth;
-        this.stealthTabs.set(tab.id, stealth);
+        this.ctx.attachedTabId = tab.id;
+        this.ctx.stealthMode = stealth;
+        this.ctx.stealthTabs.set(tab.id, stealth);
         this.iconManager.setAttachedTab(tab.id);
         this.iconManager.setStealthMode(stealth);
         // Assign to session's tab group
@@ -206,10 +205,10 @@ export class TabHandlers {
                 await this.assignTabToGroup(tab.id, params._sessionId);
             }
         }
-        const stealth = params.stealth ?? this.stealthTabs.get(tab.id) ?? false;
-        this.attachedTabId = tab.id;
-        this.stealthMode = stealth;
-        this.stealthTabs.set(tab.id, stealth);
+        const stealth = params.stealth ?? this.ctx.stealthTabs.get(tab.id) ?? false;
+        this.ctx.attachedTabId = tab.id;
+        this.ctx.stealthMode = stealth;
+        this.ctx.stealthTabs.set(tab.id, stealth);
         this.iconManager.setAttachedTab(tab.id);
         this.iconManager.setStealthMode(stealth);
         if (params.activate !== false) {
@@ -250,8 +249,8 @@ export class TabHandlers {
             }
             tabId = tab.id;
         }
-        else if (this.attachedTabId) {
-            tabId = this.attachedTabId;
+        else if (this.ctx.attachedTabId) {
+            tabId = this.ctx.attachedTabId;
         }
         else {
             throw new Error('No tab specified and no tab attached');
@@ -261,11 +260,11 @@ export class TabHandlers {
         return { success: true, message: `Tab closed` };
     }
     handleTabClosed(tabId) {
-        if (tabId === this.attachedTabId) {
-            this.attachedTabId = null;
+        if (tabId === this.ctx.attachedTabId) {
+            this.ctx.attachedTabId = null;
             this.iconManager.setAttachedTab(null);
         }
-        this.stealthTabs.delete(tabId);
+        this.ctx.stealthTabs.delete(tabId);
         this.techStackInfo.delete(tabId);
     }
 }

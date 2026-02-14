@@ -5,7 +5,7 @@
 import { capturePageState } from './capture-page-state.js';
 import { waitForDOMStable } from './wait-for-ready.js';
 export class ExperimentalFeatures {
-    static registerHandlers(wsConnection, tabHandlers, networkTracker) {
+    static registerHandlers(wsConnection, tabHandlers, networkTracker, sessionContext) {
         // capturePageState — injects DOM capture into the page, returns PageState
         wsConnection.registerCommandHandler('capturePageState', async () => {
             const tabId = tabHandlers.getAttachedTabId();

@@ -2,20 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { FileLogger } from '../src/logger';
+import { FileLogger, LoggerRegistry } from '../src/logger';
 
 describe('FileLogger', () => {
   let tempDir: string;
   let logPath: string;
 
   beforeEach(() => {
-    // Create a unique temp directory for each test
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'supersurf-logger-test-'));
     logPath = path.join(tempDir, 'test-debug.log');
   });
 
   afterEach(() => {
-    // Clean up temp directory
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {
@@ -34,7 +32,6 @@ describe('FileLogger', () => {
     });
 
     it('truncates existing log file', () => {
-      // Pre-create a file with content
       fs.writeFileSync(logPath, 'old log content\nmore old stuff\n');
       expect(fs.readFileSync(logPath, 'utf8')).toContain('old log content');
 
@@ -98,10 +95,8 @@ describe('FileLogger', () => {
 
     it('does nothing when disabled', () => {
       const logger = new FileLogger(logPath);
-      // Logger starts disabled
       logger.log('should not appear');
 
-      // File may not exist or should be empty
       if (fs.existsSync(logPath)) {
         const content = fs.readFileSync(logPath, 'utf8');
         expect(content).not.toContain('should not appear');
@@ -114,7 +109,6 @@ describe('FileLogger', () => {
       logger.log('timestamp test');
 
       const content = fs.readFileSync(logPath, 'utf8');
-      // Should match ISO timestamp format [YYYY-MM-DDTHH:MM:SS.sssZ]
       expect(content).toMatch(/\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     });
 
@@ -137,6 +131,7 @@ describe('FileLogger', () => {
 
     it('serializes objects as JSON', () => {
       const logger = new FileLogger(logPath);
+      logger.truncate = false;
       logger.enable();
       logger.log('object:', { key: 'value', nested: { a: 1 } });
 
@@ -154,7 +149,6 @@ describe('FileLogger', () => {
       logger.log('circular:', circular);
 
       const content = fs.readFileSync(logPath, 'utf8');
-      // Should fall back to String(arg)
       expect(content).toContain('circular:');
     });
 
@@ -180,15 +174,70 @@ describe('FileLogger', () => {
     });
   });
 
+  describe('truncation', () => {
+    let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('defaults to truncation enabled', () => {
+      const logger = new FileLogger(logPath);
+      expect(logger.truncate).toBe(true);
+    });
+
+    it('truncates long strings when truncation is on', () => {
+      const logger = new FileLogger(logPath);
+      logger.enable();
+      const longStr = 'x'.repeat(300);
+      logger.log(longStr);
+
+      const content = fs.readFileSync(logPath, 'utf8');
+      expect(content).toContain('...');
+      expect(content.length).toBeLessThan(longStr.length + 100);
+    });
+
+    it('does not truncate when truncation is off', () => {
+      const logger = new FileLogger(logPath);
+      logger.truncate = false;
+      logger.enable();
+      const longStr = 'x'.repeat(300);
+      logger.log(longStr);
+
+      const content = fs.readFileSync(logPath, 'utf8');
+      expect(content).toContain(longStr);
+    });
+
+    it('redacts base64 data in objects', () => {
+      const logger = new FileLogger(logPath);
+      logger.enable();
+      const fakeBase64 = 'A'.repeat(500);
+      logger.log({ data: fakeBase64 });
+
+      const content = fs.readFileSync(logPath, 'utf8');
+      expect(content).toContain('[base64 500 chars]');
+      expect(content).not.toContain(fakeBase64);
+    });
+
+    it('does not redact short strings that look like base64', () => {
+      const logger = new FileLogger(logPath);
+      logger.truncate = false;
+      logger.enable();
+      logger.log({ data: 'ABC123' });
+
+      const content = fs.readFileSync(logPath, 'utf8');
+      expect(content).toContain('ABC123');
+    });
+  });
+
   describe('getLogger() singleton', () => {
     it('returns a FileLogger instance', async () => {
-      // We need to reset the singleton between tests. The simplest way is
-      // to dynamically import with a fresh module.
-      // However, since getLogger is a singleton, we test it carefully.
-      // Use a custom log path to avoid interfering with the default.
       const customPath = path.join(tempDir, 'singleton-test.log');
 
-      // Reset the module to clear singleton state
       vi.resetModules();
       const { getLogger } = await import('../src/logger');
 
@@ -206,8 +255,163 @@ describe('FileLogger', () => {
       const logger1 = getLogger(customPath);
       const logger2 = getLogger();
 
-      // Second call should return the same instance (custom path ignored after first init)
       expect(logger1).toBe(logger2);
+    });
+  });
+});
+
+describe('LoggerRegistry', () => {
+  let tempDir: string;
+  let registry: LoggerRegistry;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'supersurf-registry-test-'));
+    registry = new LoggerRegistry();
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    registry.reset();
+    consoleErrorSpy.mockRestore();
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  describe('debugMode', () => {
+    it('defaults to false', () => {
+      expect(registry.debugMode).toBe(false);
+    });
+
+    it('can be set to truncate', () => {
+      registry.debugMode = 'truncate';
+      expect(registry.debugMode).toBe('truncate');
+    });
+
+    it('can be set to no_truncate', () => {
+      registry.debugMode = 'no_truncate';
+      expect(registry.debugMode).toBe('no_truncate');
+    });
+
+    it('propagates truncation=true for truncate mode', () => {
+      const serverLog = path.join(tempDir, 'server.log');
+      const logger = registry.getServerLogger(serverLog);
+      registry.debugMode = 'truncate';
+      expect(logger.truncate).toBe(true);
+    });
+
+    it('propagates truncation=false for no_truncate mode', () => {
+      const serverLog = path.join(tempDir, 'server.log');
+      const logger = registry.getServerLogger(serverLog);
+      registry.debugMode = 'no_truncate';
+      expect(logger.truncate).toBe(false);
+    });
+  });
+
+  describe('server logger', () => {
+    it('creates server logger with custom path', () => {
+      const serverLog = path.join(tempDir, 'server.log');
+      const logger = registry.getServerLogger(serverLog);
+      expect(logger.logFilePath).toBe(serverLog);
+    });
+
+    it('returns same instance on subsequent calls', () => {
+      const serverLog = path.join(tempDir, 'server.log');
+      const logger1 = registry.getServerLogger(serverLog);
+      const logger2 = registry.getServerLogger();
+      expect(logger1).toBe(logger2);
+    });
+  });
+
+  describe('session logs', () => {
+    it('creates session log file', () => {
+      registry.debugMode = 'truncate';
+      const sessionLogger = registry.setSessionLog('my-project');
+      expect(sessionLogger.logFilePath).toContain('my-project');
+      expect(sessionLogger.enabled).toBe(true);
+    });
+
+    it('does not enable session logger when debug is off', () => {
+      registry.debugMode = false;
+      const sessionLogger = registry.setSessionLog('my-project');
+      expect(sessionLogger.enabled).toBe(false);
+    });
+
+    it('routes getLogger to session when available', () => {
+      const serverLog = path.join(tempDir, 'server.log');
+      registry.getServerLogger(serverLog);
+      registry.debugMode = 'truncate';
+      const sessionLogger = registry.setSessionLog('test-session');
+      const resolved = registry.getLogger('test-session');
+      expect(resolved).toBe(sessionLogger);
+    });
+
+    it('falls back to server logger when session not found', () => {
+      const serverLog = path.join(tempDir, 'server.log');
+      const serverLogger = registry.getServerLogger(serverLog);
+      const resolved = registry.getLogger('nonexistent');
+      expect(resolved).toBe(serverLogger);
+    });
+
+    it('falls back to server logger when sessionId is null', () => {
+      const serverLog = path.join(tempDir, 'server.log');
+      const serverLogger = registry.getServerLogger(serverLog);
+      const resolved = registry.getLogger(null);
+      expect(resolved).toBe(serverLogger);
+    });
+
+    it('clearSessionLog disables and removes logger', () => {
+      registry.debugMode = 'truncate';
+      const sessionLogger = registry.setSessionLog('ephemeral');
+      expect(sessionLogger.enabled).toBe(true);
+
+      registry.clearSessionLog('ephemeral');
+      expect(sessionLogger.enabled).toBe(false);
+
+      // Should now fall back to server
+      const serverLog = path.join(tempDir, 'server.log');
+      registry.getServerLogger(serverLog);
+      const resolved = registry.getLogger('ephemeral');
+      expect(resolved.logFilePath).toBe(serverLog);
+    });
+
+    it('setSessionLog cleans up previous session with same id', () => {
+      registry.debugMode = 'truncate';
+      const first = registry.setSessionLog('reuse-id');
+      expect(first.enabled).toBe(true);
+
+      const second = registry.setSessionLog('reuse-id');
+      expect(first.enabled).toBe(false); // old one disabled
+      expect(second.enabled).toBe(true);
+      expect(second).not.toBe(first);
+    });
+
+    it('sanitizes session id for filename', () => {
+      registry.debugMode = 'truncate';
+      const sessionLogger = registry.setSessionLog('my project/with spaces!');
+      expect(sessionLogger.logFilePath).toContain('my_project_with_spaces_');
+      expect(sessionLogger.logFilePath).not.toContain(' ');
+      expect(sessionLogger.logFilePath).not.toContain('/with');
+    });
+
+    it('propagates truncation setting to session loggers', () => {
+      registry.debugMode = 'no_truncate';
+      const sessionLogger = registry.setSessionLog('no-trunc');
+      expect(sessionLogger.truncate).toBe(false);
+    });
+  });
+
+  describe('reset', () => {
+    it('clears all state', () => {
+      const serverLog = path.join(tempDir, 'server.log');
+      registry.getServerLogger(serverLog);
+      registry.debugMode = 'truncate';
+      registry.setSessionLog('test');
+
+      registry.reset();
+
+      expect(registry.debugMode).toBe(false);
     });
   });
 });

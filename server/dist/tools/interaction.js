@@ -5,6 +5,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.onInteract = onInteract;
 const index_1 = require("../experimental/index");
+const index_2 = require("../experimental/mouse-humanization/index");
+const logger_1 = require("../logger");
+const log = (0, logger_1.createLog)('[Interact]');
 const KEY_MAP = {
     Enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
     Tab: { key: 'Tab', code: 'Tab', keyCode: 9, text: '\t' },
@@ -67,6 +70,27 @@ async function onInteract(ctx, args, options) {
         isError: results.some(r => r.startsWith('✗')),
     };
 }
+/** Get viewport dimensions from extension */
+async function getViewportSize(ctx) {
+    return await ctx.ext.sendCmd('getViewportDimensions', {});
+}
+/** Move cursor to (x, y) using humanized path or direct CDP */
+async function moveCursorTo(ctx, x, y, sessionId) {
+    if (index_1.experimentRegistry.isEnabled('mouse_humanization')) {
+        try {
+            const viewport = await getViewportSize(ctx);
+            const waypoints = (0, index_2.generateMovement)(sessionId, x, y, viewport);
+            log(`Humanized move → (${x},${y}) via ${waypoints.length} waypoints`);
+            await ctx.ext.sendCmd('humanizedMouseMove', { waypoints });
+            return;
+        }
+        catch (e) {
+            log(`Humanization failed, falling back to teleport:`, e.message);
+        }
+    }
+    log(`Teleport → (${x},${y})`);
+    await ctx.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+}
 async function executeAction(ctx, action) {
     switch (action.type) {
         case 'click': {
@@ -83,10 +107,12 @@ async function executeAction(ctx, action) {
             }
             const button = action.button || 'left';
             const clickCount = action.clickCount || 1;
-            await ctx.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+            await moveCursorTo(ctx, x, y, '_default');
             await ctx.cdp('Input.dispatchMouseEvent', {
                 type: 'mousePressed', x, y, button, clickCount, buttons: 1,
             });
+            // Human click hold: 78-141ms, median ~109ms (Balabit Mouse Dynamics dataset)
+            await ctx.sleep(78 + Math.floor(Math.random() * 64));
             await ctx.cdp('Input.dispatchMouseEvent', {
                 type: 'mouseReleased', x, y, button, clickCount,
             });
@@ -136,7 +162,7 @@ async function executeAction(ctx, action) {
         }
         case 'hover': {
             const { x, y } = await ctx.getElementCenter(action.selector);
-            await ctx.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+            await moveCursorTo(ctx, x, y, '_default');
             return `Hovered ${action.selector} at (${x}, ${y})`;
         }
         case 'wait': {
@@ -164,17 +190,17 @@ async function executeAction(ctx, action) {
             }
         }
         case 'mouse_move': {
-            await ctx.cdp('Input.dispatchMouseEvent', {
-                type: 'mouseMoved', x: action.x, y: action.y,
-            });
+            await moveCursorTo(ctx, action.x, action.y, '_default');
             return `Moved to (${action.x}, ${action.y})`;
         }
         case 'mouse_click': {
             const button = action.button || 'left';
             const clickCount = action.clickCount || 1;
+            await moveCursorTo(ctx, action.x, action.y, '_default');
             await ctx.cdp('Input.dispatchMouseEvent', {
                 type: 'mousePressed', x: action.x, y: action.y, button, clickCount, buttons: 1,
             });
+            await ctx.sleep(78 + Math.floor(Math.random() * 64));
             await ctx.cdp('Input.dispatchMouseEvent', {
                 type: 'mouseReleased', x: action.x, y: action.y, button, clickCount,
             });

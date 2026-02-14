@@ -14,13 +14,21 @@ const backend_1 = require("./backend");
 const logger_1 = require("./logger");
 const stdio_1 = require("./stdio");
 const VERSION = '0.1.0';
+/** Parse --debug value into a DebugMode. */
+function parseDebugMode(value) {
+    if (value === 'no_truncate')
+        return 'no_truncate';
+    if (value)
+        return 'truncate';
+    return false;
+}
 function resolveConfig(options) {
     const envExperiments = process.env.SUPERSURF_EXPERIMENTS;
     const enabledExperiments = envExperiments
         ? envExperiments.split(',').map(s => s.trim()).filter(Boolean)
         : [];
     return {
-        debug: options.debug === true,
+        debug: !!options.debug,
         port: options.port || 5555,
         server: {
             name: 'SuperSurf',
@@ -38,7 +46,7 @@ function runAsWrapper() {
     outputBuffer.pipe(process.stdout);
     function spawnChild() {
         console.error('[Wrapper] Starting MCP server...');
-        const args = process.argv.slice(2).filter((arg) => arg !== '--debug');
+        const args = process.argv.slice(2).filter((arg) => !arg.startsWith('--debug'));
         args.push('--child');
         const child = (0, child_process_1.spawn)(process.execPath, [__filename, ...args], {
             stdio: ['pipe', 'pipe', 'inherit'],
@@ -95,12 +103,16 @@ function setupExitWatchdog() {
 }
 async function main(options) {
     setupExitWatchdog();
-    global.DEBUG_MODE = options.debug === true;
+    const debugMode = parseDebugMode(options.debug);
+    global.DEBUG_MODE = !!debugMode;
+    const reg = (0, logger_1.getRegistry)();
+    reg.debugMode = debugMode;
     const logger = (0, logger_1.getLogger)(options.logFile);
-    if (global.DEBUG_MODE) {
+    if (debugMode) {
         logger.enable();
         logger.log('[cli] Starting SuperSurf MCP server in PASSIVE mode');
         logger.log('[cli] Version:', VERSION);
+        logger.log('[cli] Debug mode:', debugMode);
         logger.log('[cli] Log file:', logger.logFilePath);
         if (options.port) {
             logger.log('[cli] Custom port:', options.port);
@@ -144,7 +156,7 @@ program
     .version('Version ' + VERSION)
     .name('supersurf')
     .description('MCP server for browser automation using the SuperSurf Chrome extension')
-    .option('--debug', 'Enable debug mode (verbose logging, reload tool)')
+    .option('--debug [mode]', 'Enable debug mode (verbose logging, reload tool). Use --debug=no_truncate for full payloads.')
     .option('--log-file <path>', 'Custom log file path')
     .option('--port <number>', 'WebSocket server port (default: 5555)', parseInt)
     .option('--child', 'Internal: child process spawned by wrapper')
@@ -160,7 +172,8 @@ program
         return;
     }
     if (options.child) {
-        options.debug = true;
+        // Child inherits debug mode — wrapper always enables debug
+        options.debug = options.debug || true;
     }
     await main(options);
 });

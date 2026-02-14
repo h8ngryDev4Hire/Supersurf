@@ -16,8 +16,7 @@ Unlike tools that spin up headless browsers or inject CDP scripts, SuperSurf use
 - [Usage](#usage)
   - [Tools](#tools)
   - [Experimental Features](#experimental-features)
-- [Development](#development)
-  - [Server CLI Flags](#server-cli-flags)
+- [Server CLI Flags](#server-cli-flags)
 - [Why Extension-Based?](#why-extension-based)
 - [License](#license)
 
@@ -51,7 +50,19 @@ Puppeteer and Selenium are great tools for scripted automation and testing. Supe
 AI Agent  -->  MCP Server (stdio)  -->  WebSocket  -->  Chrome Extension  -->  Browser
 ```
 
-The MCP server runs locally and communicates with the Chrome extension over a WebSocket on `localhost:5555`. The extension handles all DOM interaction through the content scripts context. CDP is only used for screenshots, network interception, and PDF export.
+The MCP server runs locally and communicates with the Chrome extension over a WebSocket on `localhost:5555`. The extension handles all DOM interaction through content scripts (isolated world, invisible to page JS). CDP is only used for screenshots, network interception, and PDF export.
+
+### Project Structure
+
+```
+supersurf/
+  server/
+    dist/          # MCP server (Node.js)
+  extension/
+    dist/          # Chrome extension (Manifest V3)
+    popup/         # Extension popup UI
+    manifest.json
+```
 
 ## Prerequisites
 
@@ -62,11 +73,7 @@ The MCP server runs locally and communicates with the Chrome extension over a We
 ## Setup
 
 ```bash
-# Install dependencies
 npm install
-
-# Build server + extension
-npm run build
 ```
 
 ### Load the Extension
@@ -140,37 +147,24 @@ Once the MCP server is registered, your agent has access to browser tools. The t
 
 ### Experimental Features
 
-Experimental Features can be enabled via the `SUPERSURF_EXPERIMENTS` environment variable:
+Experimental features can be enabled via the `SUPERSURF_EXPERIMENTS` environment variable:
 
 ```bash
-SUPERSURF_EXPERIMENTS=page_diffing,multiplexing,smart_waiting
+SUPERSURF_EXPERIMENTS=page_diffing,smart_waiting,mouse_humanization
 ```
 
 Session-based features can be toggled with the `experimental_features` tool:
 
 - **page_diffing** — After interactions, returns only DOM changes instead of a full re-read. Includes a confidence score.
 - **smart_waiting** — Replaces fixed delays with adaptive DOM stability + network idle detection.
-- **multiplexing** — Session multiplexing for concurrent MCP clients. One instance acts as the leader (owns the extension connection), others connect as followers and proxy commands through it. Includes tab ownership tracking and round-robin scheduling across sessions.
-- **storage_inspection** — Inspect browser storage (localStorage, sessionStorage, cookies).
+- **storage_inspection** — Inspect and modify browser storage (localStorage, sessionStorage).
+- **mouse_humanization** — Replaces instant cursor teleportation with human-like Bezier trajectories, overshoot correction, and idle micro-movements. Uses hand-tuned constants from the Balabit Mouse Dynamics dataset.
 
-## Development
+Infrastructure experiments (not session-toggleable, env var only):
 
-```bash
-# Dev mode (debug logging + hot reload on file changes)
-npm run dev:server
+- **multiplexer** — Session multiplexing for concurrent MCP clients. One instance acts as the leader (owns the extension connection), others connect as followers and proxy commands through it. Includes tab ownership tracking and round-robin scheduling across sessions.
 
-# Extension watch mode
-cd extension && npm run dev
-
-# Run tests
-npm test
-
-# Run server or extension tests individually
-npm run test:server
-npm run test:extension
-```
-
-### Server CLI Flags
+## Server CLI Flags
 
 | Flag | Description |
 |------|-------------|
@@ -178,9 +172,6 @@ npm run test:extension
 | `--port <n>` | WebSocket port (default: 5555) |
 | `--log-file <path>` | Log output file |
 | `--script-mode` | JSON-RPC over stdio without MCP framing |
-
-
-
 
 ## Why Extension-Based?
 
