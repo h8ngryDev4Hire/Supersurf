@@ -11,6 +11,7 @@ exports.onVerifyElementVisible = onVerifyElementVisible;
 exports.onListExtensions = onListExtensions;
 exports.onReloadExtensions = onReloadExtensions;
 exports.onPerformanceMetrics = onPerformanceMetrics;
+const index_1 = require("../experimental/index");
 async function onWindow(ctx, args, options) {
     const result = await ctx.ext.sendCmd('window', {
         action: args.action,
@@ -31,6 +32,15 @@ async function onDialog(ctx, args, options) {
     return ctx.formatResult('browser_handle_dialog', result, options);
 }
 async function onEvaluate(ctx, args, options) {
+    const code = args.function || args.expression;
+    if (code && index_1.experimentRegistry.isEnabled('secure_eval')) {
+        const analysis = (0, index_1.analyzeCode)(code);
+        if (!analysis.safe) {
+            return ctx.error(`Code blocked by \`secure_eval\` experiment.\n\n` +
+                `**Reason:** ${analysis.reason}\n\n` +
+                `Disable the experiment or refactor to use dedicated MCP tools.`, options);
+        }
+    }
     const result = await ctx.ext.sendCmd('evaluate', {
         function: args.function,
         expression: args.expression,

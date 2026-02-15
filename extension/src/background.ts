@@ -253,9 +253,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
     const code = params.function || params.expression || '';
     const wrapped = shouldUnwrap(code) ? wrapWithUnwrap(code) : code;
+    const strict = `'use strict';\n${wrapped}`;
 
     const result = await cdp(tabId, 'Runtime.evaluate', {
-      expression: wrapped,
+      expression: strict,
       returnByValue: true,
       awaitPromise: true,
       userGesture: true,

@@ -3,6 +3,7 @@
  */
 
 import type { ToolContext } from './types';
+import { experimentRegistry, analyzeCode } from '../experimental/index';
 
 export async function onWindow(ctx: ToolContext, args: any, options: any): Promise<any> {
   const result = await ctx.ext.sendCmd('window', {
@@ -27,6 +28,20 @@ export async function onDialog(ctx: ToolContext, args: any, options: any): Promi
 }
 
 export async function onEvaluate(ctx: ToolContext, args: any, options: any): Promise<any> {
+  const code = args.function || args.expression;
+
+  if (code && experimentRegistry.isEnabled('secure_eval')) {
+    const analysis = analyzeCode(code);
+    if (!analysis.safe) {
+      return ctx.error(
+        `Code blocked by \`secure_eval\` experiment.\n\n` +
+        `**Reason:** ${analysis.reason}\n\n` +
+        `Disable the experiment or refactor to use dedicated MCP tools.`,
+        options
+      );
+    }
+  }
+
   const result = await ctx.ext.sendCmd('evaluate', {
     function: args.function,
     expression: args.expression,

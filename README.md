@@ -57,10 +57,11 @@ The MCP server runs locally and communicates with the Chrome extension over a We
 ```
 supersurf/
   server/
+    src/           # MCP server source (TypeScript)
     dist/          # MCP server (Node.js)
   extension/
+    src/           # Extension source (TypeScript)
     dist/          # Chrome extension (Manifest V3)
-    popup/         # Extension popup UI
     manifest.json
 ```
 
@@ -159,6 +160,7 @@ Session-based features can be toggled with the `experimental_features` tool:
 - **smart_waiting** — Replaces fixed delays with adaptive DOM stability + network idle detection.
 - **storage_inspection** — Inspect and modify browser storage (localStorage, sessionStorage).
 - **mouse_humanization** — Replaces instant cursor teleportation with human-like Bezier trajectories, overshoot correction, and idle micro-movements. Uses hand-tuned constants from the Balabit Mouse Dynamics dataset.
+- **secure_eval** — Analyzes JavaScript in `browser_evaluate` for dangerous patterns (network calls, storage access, code injection, obfuscation) via AST parsing. Blocks unsafe code before execution.
 
 Infrastructure experiments (not session-toggleable, env var only):
 
@@ -168,10 +170,20 @@ Infrastructure experiments (not session-toggleable, env var only):
 
 | Flag | Description |
 |------|-------------|
-| `--debug` | Verbose logging + hot reload |
+| `--debug` | Verbose logging + hot reload. Logs truncated by default. |
+| `--debug=no_truncate` | Full-verbosity debug mode — no payload truncation. |
 | `--port <n>` | WebSocket port (default: 5555) |
-| `--log-file <path>` | Log output file |
+| `--log-file <path>` | Custom server log file path |
 | `--script-mode` | JSON-RPC over stdio without MCP framing |
+
+### Debug Logging
+
+When `--debug` is enabled, logs are written to:
+
+- **Server log:** `~/.supersurf/logs/server.log` — startup, connection lifecycle, all WS traffic
+- **Session logs:** `~/.supersurf/logs/sessions/supersurf-debug-{client_id}-{timestamp}.log` — created per `enable` call, closed on `disable`
+
+All outgoing/incoming WebSocket commands log their params and responses. CDP passthrough commands unwrap to show the inner method (e.g., `→ forwardCDPCommand: Input.dispatchMouseEvent { ... }`). Base64 payloads (screenshots, PDFs) are automatically redacted in truncated mode.
 
 ## Why Extension-Based?
 

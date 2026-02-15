@@ -4,6 +4,8 @@
  */
 export { diffSnapshots, calculateConfidence, formatDiffSection } from './page-diffing';
 export type { PageState, DiffResult } from './page-diffing';
+export { analyzeCode } from './secure-eval';
+export type { AnalysisResult } from './secure-eval';
 import type { ToolSchema, ToolContext } from '../tools/types';
 declare class ExperimentRegistry {
     private _enabled;

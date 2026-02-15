@@ -5,11 +5,13 @@
 
 export { diffSnapshots, calculateConfidence, formatDiffSection } from './page-diffing';
 export type { PageState, DiffResult } from './page-diffing';
+export { analyzeCode } from './secure-eval';
+export type { AnalysisResult } from './secure-eval';
 
 import type { ToolSchema, ToolContext } from '../tools/types';
 import { storageInspectionSchema, onBrowserStorage } from './storage-inspection';
 
-const AVAILABLE_EXPERIMENTS = ['page_diffing', 'smart_waiting', 'storage_inspection', 'mouse_humanization'] as const;
+const AVAILABLE_EXPERIMENTS = ['page_diffing', 'smart_waiting', 'storage_inspection', 'mouse_humanization', 'secure_eval'] as const;
 type ExperimentName = typeof AVAILABLE_EXPERIMENTS[number];
 
 class ExperimentRegistry {

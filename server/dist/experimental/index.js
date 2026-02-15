@@ -4,7 +4,7 @@
  * Part of SuperSurf experimental features
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.experimentRegistry = exports.formatDiffSection = exports.calculateConfidence = exports.diffSnapshots = void 0;
+exports.experimentRegistry = exports.analyzeCode = exports.formatDiffSection = exports.calculateConfidence = exports.diffSnapshots = void 0;
 exports.isInfraExperimentEnabled = isInfraExperimentEnabled;
 exports.applyInitialState = applyInitialState;
 exports.getExperimentalToolSchemas = getExperimentalToolSchemas;
@@ -13,8 +13,10 @@ var page_diffing_1 = require("./page-diffing");
 Object.defineProperty(exports, "diffSnapshots", { enumerable: true, get: function () { return page_diffing_1.diffSnapshots; } });
 Object.defineProperty(exports, "calculateConfidence", { enumerable: true, get: function () { return page_diffing_1.calculateConfidence; } });
 Object.defineProperty(exports, "formatDiffSection", { enumerable: true, get: function () { return page_diffing_1.formatDiffSection; } });
+var secure_eval_1 = require("./secure-eval");
+Object.defineProperty(exports, "analyzeCode", { enumerable: true, get: function () { return secure_eval_1.analyzeCode; } });
 const storage_inspection_1 = require("./storage-inspection");
-const AVAILABLE_EXPERIMENTS = ['page_diffing', 'smart_waiting', 'storage_inspection', 'mouse_humanization'];
+const AVAILABLE_EXPERIMENTS = ['page_diffing', 'smart_waiting', 'storage_inspection', 'mouse_humanization', 'secure_eval'];
 class ExperimentRegistry {
     _enabled = new Map();
     enable(feature) {

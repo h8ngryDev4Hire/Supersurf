@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
+    "acorn": "^8.14.0",
+    "acorn-walk": "^8.3.4",
     "commander": "^14.0.1",
     "image-size": "^2.0.2",
     "jsonpath-plus": "^10.3.0",
