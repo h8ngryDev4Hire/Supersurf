@@ -8,4 +8,10 @@ export interface AnalysisResult {
     reason?: string;
 }
 export declare function analyzeCode(code: string): AnalysisResult;
+/**
+ * Wrap user code in a page-context Proxy that intercepts blocked API access.
+ * Sloppy-mode outer for `with`, strict-mode inner for the user code.
+ * Returns a self-contained IIFE string ready for Runtime.evaluate.
+ */
+export declare function wrapWithPageProxy(code: string): string;
 //# sourceMappingURL=secure-eval.d.ts.map

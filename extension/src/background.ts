@@ -17,6 +17,7 @@ import { secureFill } from './secure-fill.js';
 import { ExperimentalFeatures } from './experimental/index.js';
 import { waitForDOMStable } from './experimental/wait-for-ready.js';
 import { registerMouseHandlers, handleIdleDrift } from './experimental/mouse-humanization.js';
+import { registerSecureEvalHandlers } from './experimental/secure-eval/index.js';
 import { SessionContext } from './session-context.js';
 
 // chrome.debugger is a reserved word — access via bracket notation
@@ -300,11 +301,21 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     if (!tabId) throw new Error('No tab attached');
 
     const code = params.function || params.expression || '';
-    const wrapped = shouldUnwrap(code) ? wrapWithUnwrap(code) : code;
-    const strict = `'use strict';\n${wrapped}`;
+
+    let expression: string;
+    if (params.prewrapped) {
+      // Code is already wrapped by secure_eval Layer 3 — don't add strict prefix
+      // (the wrapper has its own strict inner IIFE, and the sloppy outer MUST NOT
+      // be strict or `with` is a SyntaxError)
+      const wrapped = shouldUnwrap(code) ? wrapWithUnwrap(code) : code;
+      expression = wrapped;
+    } else {
+      const wrapped = shouldUnwrap(code) ? wrapWithUnwrap(code) : code;
+      expression = `'use strict';\n${wrapped}`;
+    }
 
     const result = await cdp(tabId, 'Runtime.evaluate', {
-      expression: strict,
+      expression,
       returnByValue: true,
       awaitPromise: true,
       userGesture: true,
@@ -488,6 +499,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // ── Experimental feature handlers ──
   ExperimentalFeatures.registerHandlers(wsConnection, tabHandlers, networkTracker, sessionContext);
   registerMouseHandlers(wsConnection, sessionContext, cdp);
+  registerSecureEvalHandlers(wsConnection);
 
   // ── Popup message handler ──
   chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: any) => {
