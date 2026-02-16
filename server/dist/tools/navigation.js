@@ -47,28 +47,38 @@ async function onNavigate(ctx, args, options) {
     const action = args.action;
     let result;
     switch (action) {
-        case 'url':
-            result = await ctx.ext.sendCmd('navigate', { action: 'url', url: args.url });
+        case 'url': {
+            const smartWait = index_1.experimentRegistry.isEnabled('smart_waiting');
+            result = await ctx.ext.sendCmd('navigate', {
+                action: 'url',
+                url: args.url,
+                screenshot: !!args.screenshot,
+                smartWait,
+                smartWaitStabilityMs: 500,
+            });
             if (ctx.connectionManager?.attachedTab) {
                 ctx.connectionManager.attachedTab.url = args.url;
             }
-            // === EXPERIMENTAL: smart waiting ===
-            if (index_1.experimentRegistry.isEnabled('smart_waiting')) {
-                try {
-                    await ctx.ext.sendCmd('waitForReady', { timeout: 10000 });
+            // If extension didn't handle waiting (no screenshot path), wait server-side
+            if (!args.screenshot) {
+                if (smartWait) {
+                    try {
+                        await ctx.ext.sendCmd('waitForReady', { timeout: 10000, stabilityMs: 500 });
+                    }
+                    catch { /* fall through — page may already be ready */ }
                 }
-                catch { /* fall through — page may already be ready */ }
-            }
-            else {
-                await ctx.sleep(1500);
+                else {
+                    await ctx.sleep(1500);
+                }
             }
             break;
+        }
         case 'back':
             await ctx.eval('window.history.back()');
             // === EXPERIMENTAL: smart waiting ===
             if (index_1.experimentRegistry.isEnabled('smart_waiting')) {
                 try {
-                    await ctx.ext.sendCmd('waitForReady', { timeout: 10000 });
+                    await ctx.ext.sendCmd('waitForReady', { timeout: 10000, stabilityMs: 500 });
                 }
                 catch {
                     await ctx.sleep(1500);
@@ -84,7 +94,7 @@ async function onNavigate(ctx, args, options) {
             // === EXPERIMENTAL: smart waiting ===
             if (index_1.experimentRegistry.isEnabled('smart_waiting')) {
                 try {
-                    await ctx.ext.sendCmd('waitForReady', { timeout: 10000 });
+                    await ctx.ext.sendCmd('waitForReady', { timeout: 10000, stabilityMs: 500 });
                 }
                 catch {
                     await ctx.sleep(1500);
@@ -100,7 +110,7 @@ async function onNavigate(ctx, args, options) {
             // === EXPERIMENTAL: smart waiting ===
             if (index_1.experimentRegistry.isEnabled('smart_waiting')) {
                 try {
-                    await ctx.ext.sendCmd('waitForReady', { timeout: 10000 });
+                    await ctx.ext.sendCmd('waitForReady', { timeout: 10000, stabilityMs: 500 });
                 }
                 catch { /* fall through */ }
             }
@@ -111,6 +121,12 @@ async function onNavigate(ctx, args, options) {
         default:
             return ctx.error(`Unknown navigate action: ${action}`, options);
     }
-    return ctx.formatResult('browser_navigate', result, options);
+    const formatted = ctx.formatResult('browser_navigate', result, options);
+    // Forward pre-captured screenshot data for maybeAppendScreenshot
+    if (result?.screenshotData && formatted && !options.rawResult) {
+        formatted._screenshotData = result.screenshotData;
+        formatted._screenshotMimeType = result.screenshotMimeType;
+    }
+    return formatted;
 }
 //# sourceMappingURL=navigation.js.map

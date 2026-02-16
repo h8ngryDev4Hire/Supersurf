@@ -187,38 +187,39 @@ describe('calculateConfidence()', () => {
     expect(calculateConfidence(makeState())).toBe(1.0);
   });
 
-  it('deducts for shadow roots (1-10)', () => {
-    expect(calculateConfidence(makeState({ shadowRootCount: 5 }))).toBe(0.85);
+  it('deducts flat -0.05 for any shadow roots', () => {
+    expect(calculateConfidence(makeState({ shadowRootCount: 5 }))).toBe(0.95);
   });
 
-  it('deducts more for many shadow roots (>10)', () => {
-    expect(calculateConfidence(makeState({ shadowRootCount: 15 }))).toBe(0.65);
+  it('deducts flat -0.05 for many shadow roots (same penalty)', () => {
+    expect(calculateConfidence(makeState({ shadowRootCount: 15 }))).toBe(0.95);
   });
 
-  it('deducts for iframes (1-5)', () => {
-    expect(calculateConfidence(makeState({ iframeCount: 3 }))).toBe(0.90);
+  it('deducts flat -0.05 for any iframes', () => {
+    expect(calculateConfidence(makeState({ iframeCount: 3 }))).toBe(0.95);
   });
 
-  it('deducts more for many iframes (>5)', () => {
-    expect(calculateConfidence(makeState({ iframeCount: 10 }))).toBe(0.80);
+  it('deducts flat -0.05 for many iframes (same penalty)', () => {
+    expect(calculateConfidence(makeState({ iframeCount: 10 }))).toBe(0.95);
   });
 
   it('deducts for large page (>5000 elements)', () => {
-    expect(calculateConfidence(makeState({ pageElementCount: 8000 }))).toBe(0.85);
+    expect(calculateConfidence(makeState({ pageElementCount: 8000 }))).toBe(0.95);
   });
 
-  it('deducts for hidden elements', () => {
-    expect(calculateConfidence(makeState({ hiddenElementCount: 5 }))).toBe(0.90);
+  it('no penalty for hidden elements', () => {
+    expect(calculateConfidence(makeState({ hiddenElementCount: 5 }))).toBe(1.0);
   });
 
-  it('stacks deductions but never goes below 0', () => {
+  it('stacks flat penalties but stays high', () => {
     const worstCase = makeState({
       shadowRootCount: 20,
       iframeCount: 10,
       pageElementCount: 10000,
       hiddenElementCount: 100,
     });
-    expect(calculateConfidence(worstCase)).toBeCloseTo(0.20);
+    // -0.05 shadow + -0.05 iframe + -0.05 large = 0.85
+    expect(calculateConfidence(worstCase)).toBeCloseTo(0.85);
   });
 });
 

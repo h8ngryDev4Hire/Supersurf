@@ -46,6 +46,8 @@ describe('onInteract()', () => {
     expect(ctx.cdp).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mouseMoved' }));
     expect(ctx.cdp).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mousePressed' }));
     expect(ctx.cdp).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mouseReleased' }));
+    // DOM-level click dispatched for navigation
+    expect(ctx.eval).toHaveBeenCalledWith(expect.stringContaining('.click()'));
     expect(result.content[0].text).toContain('Clicked');
   });
 
@@ -55,6 +57,8 @@ describe('onInteract()', () => {
     }, {});
 
     expect(ctx.cdp).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ x: 200, y: 300, type: 'mousePressed' }));
+    // DOM-level click dispatched for navigation
+    expect(ctx.eval).toHaveBeenCalledWith(expect.stringContaining('elementFromPoint(200, 300)'));
     expect(result.content[0].text).toContain('200, 300');
   });
 

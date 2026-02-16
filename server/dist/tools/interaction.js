@@ -53,8 +53,8 @@ async function onInteract(ctx, args, options) {
         try {
             const afterState = await ctx.ext.sendCmd('capturePageState', {});
             const confidence = (0, index_1.calculateConfidence)(afterState);
-            if (confidence >= 0.7) {
-                diffSection = (0, index_1.formatDiffSection)((0, index_1.diffSnapshots)(beforeState, afterState), confidence);
+            if (confidence >= 0.5) {
+                diffSection = (0, index_1.formatDiffSection)((0, index_1.diffSnapshots)(beforeState, afterState), confidence, afterState);
             }
             else {
                 diffSection = `\n\n---\n**Page diff:** confidence below threshold (${Math.round(confidence * 100)}%) — full re-read recommended`;
@@ -116,6 +116,18 @@ async function executeAction(ctx, action) {
             await ctx.cdp('Input.dispatchMouseEvent', {
                 type: 'mouseReleased', x, y, button, clickCount,
             });
+            // Dispatch DOM-level click for navigation (CDP mouse events don't synthesize click)
+            await ctx.eval(`(() => {
+        const el = document.elementFromPoint(${x}, ${y});
+        if (el && (el.closest('a[href]') || el.onclick)) el.click();
+      })()`).catch(() => { });
+            // === EXPERIMENTAL: post-click smart waiting ===
+            if (index_1.experimentRegistry.isEnabled('smart_waiting')) {
+                try {
+                    await ctx.ext.sendCmd('waitForReady', { timeout: 3000, stabilityMs: 300 });
+                }
+                catch { /* non-blocking — click may not trigger navigation */ }
+            }
             return `Clicked ${action.selector ?? `(${x}, ${y})`} at (${x}, ${y})`;
         }
         case 'type': {
@@ -204,6 +216,18 @@ async function executeAction(ctx, action) {
             await ctx.cdp('Input.dispatchMouseEvent', {
                 type: 'mouseReleased', x: action.x, y: action.y, button, clickCount,
             });
+            // Dispatch DOM-level click for navigation (CDP mouse events don't synthesize click)
+            await ctx.eval(`(() => {
+        const el = document.elementFromPoint(${action.x}, ${action.y});
+        if (el && (el.closest('a[href]') || el.onclick)) el.click();
+      })()`).catch(() => { });
+            // === EXPERIMENTAL: post-click smart waiting ===
+            if (index_1.experimentRegistry.isEnabled('smart_waiting')) {
+                try {
+                    await ctx.ext.sendCmd('waitForReady', { timeout: 3000, stabilityMs: 300 });
+                }
+                catch { /* non-blocking — click may not trigger navigation */ }
+            }
             return `Clicked at (${action.x}, ${action.y})`;
         }
         case 'scroll_to': {

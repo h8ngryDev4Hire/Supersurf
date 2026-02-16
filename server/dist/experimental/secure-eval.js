@@ -53,13 +53,22 @@ function isMemberCall(callee, obj, prop) {
 }
 // ── Blocked patterns ─────────────────────────────────────────
 const BLOCKED_PATTERNS = [
-    // Blocked API calls
+    // Blocked API calls (direct: fetch(), or via global: window.fetch())
     {
         nodeType: 'CallExpression',
         matcher: (node) => {
             const callee = node.callee;
+            const BLOCKED_APIS = ['fetch', 'eval', 'atob', 'btoa'];
             if (callee?.type === 'Identifier') {
-                return ['fetch', 'eval', 'atob', 'btoa'].includes(callee.name);
+                return BLOCKED_APIS.includes(callee.name);
+            }
+            if (callee?.type === 'MemberExpression' &&
+                callee.object?.type === 'Identifier' &&
+                ['window', 'globalThis', 'self'].includes(callee.object.name) &&
+                !callee.computed &&
+                callee.property?.type === 'Identifier' &&
+                BLOCKED_APIS.includes(callee.property.name)) {
+                return true;
             }
             return false;
         },
@@ -110,6 +119,14 @@ const BLOCKED_PATTERNS = [
             return false;
         },
         reason: 'Direct storage access (use the browser_storage tool instead)',
+    },
+    // Cookie access
+    {
+        nodeType: 'MemberExpression',
+        matcher: (node) => isIdentifier(node.object, 'document') &&
+            isIdentifier(node.property, 'cookie') &&
+            !node.computed,
+        reason: 'Direct cookie access (use dedicated MCP tools instead)',
     },
     // Dynamic global access
     {

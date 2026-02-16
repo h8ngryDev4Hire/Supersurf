@@ -17,5 +17,5 @@ export interface DiffResult {
 }
 export declare function diffSnapshots(before: PageState, after: PageState): DiffResult;
 export declare function calculateConfidence(state: PageState): number;
-export declare function formatDiffSection(diff: DiffResult, confidence: number): string;
+export declare function formatDiffSection(diff: DiffResult, confidence: number, state?: PageState): string;
 //# sourceMappingURL=page-diffing.d.ts.map

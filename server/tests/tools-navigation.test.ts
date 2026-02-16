@@ -74,7 +74,7 @@ describe('onNavigate()', () => {
 
   it('navigates to URL', async () => {
     await onNavigate(ctx, { action: 'url', url: 'https://example.com' }, {});
-    expect(ctx.ext.sendCmd).toHaveBeenCalledWith('navigate', { action: 'url', url: 'https://example.com' });
+    expect(ctx.ext.sendCmd).toHaveBeenCalledWith('navigate', expect.objectContaining({ action: 'url', url: 'https://example.com' }));
   });
 
   it('navigates back via history', async () => {
@@ -99,5 +99,24 @@ describe('onNavigate()', () => {
   it('returns error for unknown action', async () => {
     await onNavigate(ctx, { action: 'teleport' }, {});
     expect(ctx.error).toHaveBeenCalledWith(expect.stringContaining('Unknown navigate action'), expect.anything());
+  });
+
+  it('forwards screenshotData from navigate result', async () => {
+    (ctx.ext.sendCmd as any).mockResolvedValue({
+      success: true, url: 'https://example.com',
+      screenshotData: 'fakeBase64', screenshotMimeType: 'image/jpeg',
+    });
+    const result = await onNavigate(ctx, { action: 'url', url: 'https://example.com', screenshot: true }, {});
+    expect(result._screenshotData).toBe('fakeBase64');
+    expect(result._screenshotMimeType).toBe('image/jpeg');
+  });
+
+  it('passes screenshot and smartWait params to navigate command', async () => {
+    (ctx.ext.sendCmd as any).mockResolvedValue({ success: true, url: 'https://example.com' });
+    await onNavigate(ctx, { action: 'url', url: 'https://example.com', screenshot: true }, {});
+    expect(ctx.ext.sendCmd).toHaveBeenCalledWith('navigate', expect.objectContaining({
+      screenshot: true,
+      smartWait: false, // experiments are mocked as disabled
+    }));
   });
 });

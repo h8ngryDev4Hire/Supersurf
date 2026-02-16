@@ -17,6 +17,7 @@
     "test:extension": "cd extension && npm test",
     "test": "npm run test:server && npm run test:extension",
     "mcp": "claude mcp add supersurf -- node server/dist/cli.js",
-    "start": "chromium --load-extension=./extension --user-data-dir=/tmp/supersurf-profile"
+    "start": "chromium --load-extension=./extension --user-data-dir=/tmp/supersurf-profile",
+    "filesize": "find ./{extension,server} -type f ! -path \"*/node_modules/*\" ! -path \"*/dist/*\" ! -name \"package-lock.json\" -exec wc -l {} + | sort -nr"
   }
 }

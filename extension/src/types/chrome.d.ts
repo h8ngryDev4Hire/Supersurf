@@ -67,6 +67,7 @@ declare namespace chrome {
     };
     const onUpdated: {
       addListener(callback: (tabId: number, changeInfo: any, tab: Tab) => void): void;
+      removeListener(callback: (tabId: number, changeInfo: any, tab: Tab) => void): void;
     };
   }
 

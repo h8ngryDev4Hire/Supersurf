@@ -13,6 +13,7 @@ import { ConsoleHandler } from './handlers/console.js';
 import { DownloadHandler } from './handlers/downloads.js';
 import { wrapWithUnwrap, shouldUnwrap } from './utils/unwrap.js';
 import { ExperimentalFeatures } from './experimental/index.js';
+import { waitForDOMStable } from './experimental/wait-for-ready.js';
 import { registerMouseHandlers, handleIdleDrift } from './experimental/mouse-humanization.js';
 import { SessionContext } from './session-context.js';
 // chrome.debugger is a reserved word — access via bracket notation
@@ -205,6 +206,52 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         const action = params.action || 'url';
         if (action === 'url') {
             await chrome.tabs.update(tabId, { url: params.url });
+            // If screenshot requested, wait for load + capture in one round-trip
+            if (params.screenshot) {
+                // Wait for tabs.onUpdated status: 'complete'
+                await new Promise((resolve) => {
+                    const timeout = setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 15000);
+                    const listener = (updatedTabId, changeInfo) => {
+                        if (updatedTabId === tabId && changeInfo.status === 'complete') {
+                            chrome.tabs.onUpdated.removeListener(listener);
+                            clearTimeout(timeout);
+                            resolve();
+                        }
+                    };
+                    chrome.tabs.onUpdated.addListener(listener);
+                });
+                // Smart wait or fixed delay
+                if (params.smartWait) {
+                    try {
+                        const stabilityMs = params.smartWaitStabilityMs || 500;
+                        await new Promise(r => setTimeout(r, 500)); // minimum wait
+                        await chrome.scripting.executeScript({
+                            target: { tabId },
+                            func: waitForDOMStable,
+                            args: [stabilityMs],
+                        });
+                    }
+                    catch { /* fall through */ }
+                }
+                else {
+                    await new Promise(r => setTimeout(r, 1500));
+                }
+                // Capture screenshot
+                try {
+                    await ensureDebugger(tabId);
+                    const screenshotResult = await cdp(tabId, 'Page.captureScreenshot', {
+                        format: 'jpeg', quality: 70, optimizeForSpeed: true,
+                    }, 45000);
+                    return {
+                        success: true, url: params.url,
+                        screenshotData: screenshotResult.data,
+                        screenshotMimeType: 'image/jpeg',
+                    };
+                }
+                catch {
+                    return { success: true, url: params.url };
+                }
+            }
             return { success: true, url: params.url };
         }
         else if (action === 'back') {
@@ -235,14 +282,20 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             throw new Error('No tab attached');
         const code = params.function || params.expression || '';
         const wrapped = shouldUnwrap(code) ? wrapWithUnwrap(code) : code;
+        const strict = `'use strict';\n${wrapped}`;
         const result = await cdp(tabId, 'Runtime.evaluate', {
-            expression: wrapped,
+            expression: strict,
             returnByValue: true,
             awaitPromise: true,
             userGesture: true,
         });
         if (result.exceptionDetails) {
-            throw new Error(result.exceptionDetails.text || 'JavaScript execution error');
+            const details = result.exceptionDetails;
+            const message = details.exception?.description
+                || details.text
+                || details.exception?.className
+                || 'JavaScript execution error';
+            throw new Error(message);
         }
         return result.result?.value;
     });

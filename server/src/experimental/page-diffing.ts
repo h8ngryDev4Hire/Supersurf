@@ -32,21 +32,21 @@ export function diffSnapshots(before: PageState, after: PageState): DiffResult {
 export function calculateConfidence(state: PageState): number {
   let confidence = 1.0;
 
-  if (state.shadowRootCount > 10) confidence -= 0.35;
-  else if (state.shadowRootCount > 0) confidence -= 0.15;
-
-  if (state.iframeCount > 5) confidence -= 0.20;
-  else if (state.iframeCount > 0) confidence -= 0.10;
-
-  if (state.pageElementCount > 5000) confidence -= 0.15;
-
-  if (state.hiddenElementCount > 0) confidence -= 0.10;
+  // Flat penalties — shadow DOM and iframes reduce visibility but don't invalidate the diff
+  if (state.shadowRootCount > 0) confidence -= 0.05;
+  if (state.iframeCount > 0) confidence -= 0.05;
+  if (state.pageElementCount > 5000) confidence -= 0.05;
+  // Hidden elements: no penalty (every page has them)
 
   return Math.max(0, confidence);
 }
 
-export function formatDiffSection(diff: DiffResult, confidence: number): string {
-  const parts: string[] = ['\n\n---', `**Page diff** (confidence: ${Math.round(confidence * 100)}%)`];
+export function formatDiffSection(diff: DiffResult, confidence: number, state?: PageState): string {
+  let label = `**Page diff** (confidence: ${Math.round(confidence * 100)}%)`;
+  if (state && (state.shadowRootCount > 0 || state.iframeCount > 0)) {
+    label += ' (partial — shadow DOM/iframes present)';
+  }
+  const parts: string[] = ['\n\n---', label];
 
   if (diff.countDelta !== 0) {
     parts.push(`Elements: ${diff.countDelta > 0 ? '+' : ''}${diff.countDelta}`);

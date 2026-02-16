@@ -83,7 +83,12 @@ export class BrowserBridge {
       userGesture: true,
     });
     if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.text || result.exceptionDetails.exception?.description || 'JavaScript execution error');
+      const details = result.exceptionDetails;
+      const message = details.exception?.description
+        || details.text
+        || details.exception?.className
+        || 'JavaScript execution error';
+      throw new Error(message);
     }
     return result.result?.value;
   }
@@ -221,13 +226,23 @@ export class BrowserBridge {
     if (options.rawResult || result?.isError) return result;
 
     try {
-      const screenshotResult = await onScreenshot(this.ctx, {}, { rawResult: true });
-      if (screenshotResult?.data) {
-        const imageBlock = {
-          type: 'image',
-          data: screenshotResult.data,
-          mimeType: screenshotResult.mimeType || 'image/jpeg',
-        };
+      // Use pre-captured screenshot from navigate handler if available
+      let data: string | undefined;
+      let mimeType: string | undefined;
+
+      // Check if the navigate result already contains screenshot data (atomic capture)
+      // The formatResult may have stringified the result, so check the raw result too
+      if (result?._screenshotData) {
+        data = result._screenshotData;
+        mimeType = result._screenshotMimeType || 'image/jpeg';
+      } else {
+        const screenshotResult = await onScreenshot(this.ctx, {}, { rawResult: true });
+        data = screenshotResult?.data;
+        mimeType = screenshotResult?.mimeType || 'image/jpeg';
+      }
+
+      if (data) {
+        const imageBlock = { type: 'image', data, mimeType: mimeType || 'image/jpeg' };
         if (result?.content && Array.isArray(result.content)) {
           result.content.push(imageBlock);
         }

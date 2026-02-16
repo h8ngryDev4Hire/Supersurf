@@ -51,7 +51,7 @@ export function wrapWithUnwrap(userCode: string): string {
 
   let result;
   try {
-    result = (function() { return ${userCode} })();
+    result = eval(${JSON.stringify(userCode)});
   } finally {
     // Restore wrapped methods
     if (_saved.querySelector) document.querySelector = _saved.querySelector;

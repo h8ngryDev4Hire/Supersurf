@@ -41,13 +41,17 @@ export class ExperimentalFeatures {
       if (!tabId) throw new Error('No tab attached');
 
       const timeout = params?.timeout || 10000;
+      const stabilityMs = params?.stabilityMs || 300;
       const start = Date.now();
+
+      // Minimum wait before checking — DOM needs time to start mutating after navigation
+      await new Promise(r => setTimeout(r, 500));
 
       // DOM stability via injected script
       const domStablePromise = chrome.scripting.executeScript({
         target: { tabId },
         func: waitForDOMStable,
-        args: [300],
+        args: [stabilityMs],
       });
 
       // Network idle polling
@@ -92,6 +96,6 @@ function pollNetworkIdle(tracker: NetworkTracker, idleMs: number, timeout: numbe
         clearInterval(interval);
         resolve(); // Resolve on timeout — don't block forever
       }
-    }, 200);
+    }, 100);
   });
 }

@@ -149,6 +149,25 @@ describe('BrowserBridge', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('fail');
     });
+
+    it('prioritizes exception.description in evalExpr error path', async () => {
+      // evalExpr is used by ctx.eval() — test via forwardCDPCommand response
+      // Simulate CDP returning exceptionDetails with rich description
+      mockExt.sendCmd.mockResolvedValue({
+        exceptionDetails: {
+          text: 'Uncaught',
+          exception: {
+            description: 'ReferenceError: foo is not defined\n    at <anonymous>:1:1',
+            className: 'ReferenceError',
+          },
+        },
+      });
+      // browser_navigate with action 'back' calls ctx.eval('window.history.back()')
+      // which routes through evalExpr → cdp → forwardCDPCommand
+      const result = await bridge.callTool('browser_navigate', { action: 'back' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('ReferenceError: foo is not defined');
+    });
   });
 
   // ── listTools ──

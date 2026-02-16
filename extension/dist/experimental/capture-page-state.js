@@ -25,14 +25,13 @@ export function capturePageState() {
         if (rect.width === 0 && rect.height === 0)
             continue;
         elementCount++;
-        // Extract direct text nodes only (not children's text)
-        for (let j = 0; j < el.childNodes.length; j++) {
-            const node = el.childNodes[j];
-            if (node.nodeType === Node.TEXT_NODE) {
-                const text = (node.textContent || '').trim();
-                if (text.length > 0 && text.length < 500) {
-                    textSet.add(text);
-                }
+        // Extract visible text via innerText (captures nested changes)
+        // Skip body/html — too expensive
+        const tag = el.tagName;
+        if (tag !== 'BODY' && tag !== 'HTML' && el.innerText) {
+            const text = el.innerText.substring(0, 200).trim();
+            if (text.length > 0) {
+                textSet.add(text);
             }
         }
     }

@@ -194,7 +194,9 @@ function getToolSchemas() {
         // ── JavaScript ──
         {
             name: 'browser_evaluate',
-            description: 'Run JavaScript in the page context and return the result.',
+            description: 'Run JavaScript in the page context and return the result. ' +
+                'When the `secure_eval` experiment is enabled, code is analyzed for dangerous patterns ' +
+                '(network calls, storage access, code injection, obfuscation) and blocked if unsafe.',
             inputSchema: {
                 type: 'object',
                 properties: {

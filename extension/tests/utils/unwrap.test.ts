@@ -113,7 +113,8 @@ describe('wrapWithUnwrap', () => {
     const code = 'document.querySelector(".test")';
     const result = wrapWithUnwrap(code);
     expect(result).not.toBe(code);
-    expect(result).toContain(code);
+    expect(result).toContain('eval(');
+    expect(result).toContain(JSON.stringify(code));
   });
 
   it('wrapped code contains iframe creation for native method restoration', () => {
@@ -174,9 +175,25 @@ describe('wrapWithUnwrap', () => {
     expect(result).toMatch(/\}\)\(\)$/);
   });
 
-  it('wrapped code embeds the user code inside a nested function', () => {
+  it('wrapped code embeds the user code via eval()', () => {
     const userCode = 'document.querySelector(".item").textContent';
     const result = wrapWithUnwrap(userCode);
-    expect(result).toContain(`return ${userCode}`);
+    expect(result).toContain('eval(');
+    expect(result).toContain(JSON.stringify(userCode));
+  });
+
+  it('handles multi-statement code without syntax errors', () => {
+    const userCode = 'const x = document.querySelector(".a"); x.textContent';
+    const result = wrapWithUnwrap(userCode);
+    // Should NOT produce "return const x = ..." which is a syntax error
+    expect(result).not.toContain(`return ${userCode}`);
+    expect(result).toContain('eval(');
+  });
+
+  it('handles single expression through eval', () => {
+    const userCode = 'document.querySelector(".btn").innerText';
+    const result = wrapWithUnwrap(userCode);
+    expect(result).toContain('eval(');
+    expect(result).toContain(JSON.stringify(userCode));
   });
 });

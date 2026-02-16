@@ -49,24 +49,34 @@ export async function onNavigate(ctx: ToolContext, args: any, options: any): Pro
   let result: any;
 
   switch (action) {
-    case 'url':
-      result = await ctx.ext.sendCmd('navigate', { action: 'url', url: args.url });
+    case 'url': {
+      const smartWait = experimentRegistry.isEnabled('smart_waiting');
+      result = await ctx.ext.sendCmd('navigate', {
+        action: 'url',
+        url: args.url,
+        screenshot: !!args.screenshot,
+        smartWait,
+        smartWaitStabilityMs: 500,
+      });
       if (ctx.connectionManager?.attachedTab) {
         ctx.connectionManager.attachedTab.url = args.url;
       }
-      // === EXPERIMENTAL: smart waiting ===
-      if (experimentRegistry.isEnabled('smart_waiting')) {
-        try { await ctx.ext.sendCmd('waitForReady', { timeout: 10000 }); }
-        catch { /* fall through — page may already be ready */ }
-      } else {
-        await ctx.sleep(1500);
+      // If extension didn't handle waiting (no screenshot path), wait server-side
+      if (!args.screenshot) {
+        if (smartWait) {
+          try { await ctx.ext.sendCmd('waitForReady', { timeout: 10000, stabilityMs: 500 }); }
+          catch { /* fall through — page may already be ready */ }
+        } else {
+          await ctx.sleep(1500);
+        }
       }
       break;
+    }
     case 'back':
       await ctx.eval('window.history.back()');
       // === EXPERIMENTAL: smart waiting ===
       if (experimentRegistry.isEnabled('smart_waiting')) {
-        try { await ctx.ext.sendCmd('waitForReady', { timeout: 10000 }); }
+        try { await ctx.ext.sendCmd('waitForReady', { timeout: 10000, stabilityMs: 500 }); }
         catch { await ctx.sleep(1500); }
       } else {
         await ctx.sleep(1500);
@@ -77,7 +87,7 @@ export async function onNavigate(ctx: ToolContext, args: any, options: any): Pro
       await ctx.eval('window.history.forward()');
       // === EXPERIMENTAL: smart waiting ===
       if (experimentRegistry.isEnabled('smart_waiting')) {
-        try { await ctx.ext.sendCmd('waitForReady', { timeout: 10000 }); }
+        try { await ctx.ext.sendCmd('waitForReady', { timeout: 10000, stabilityMs: 500 }); }
         catch { await ctx.sleep(1500); }
       } else {
         await ctx.sleep(1500);
@@ -88,7 +98,7 @@ export async function onNavigate(ctx: ToolContext, args: any, options: any): Pro
       result = await ctx.ext.sendCmd('navigate', { action: 'reload' });
       // === EXPERIMENTAL: smart waiting ===
       if (experimentRegistry.isEnabled('smart_waiting')) {
-        try { await ctx.ext.sendCmd('waitForReady', { timeout: 10000 }); }
+        try { await ctx.ext.sendCmd('waitForReady', { timeout: 10000, stabilityMs: 500 }); }
         catch { /* fall through */ }
       } else {
         await ctx.sleep(1500);
@@ -98,5 +108,13 @@ export async function onNavigate(ctx: ToolContext, args: any, options: any): Pro
       return ctx.error(`Unknown navigate action: ${action}`, options);
   }
 
-  return ctx.formatResult('browser_navigate', result, options);
+  const formatted = ctx.formatResult('browser_navigate', result, options);
+
+  // Forward pre-captured screenshot data for maybeAppendScreenshot
+  if (result?.screenshotData && formatted && !options.rawResult) {
+    formatted._screenshotData = result.screenshotData;
+    formatted._screenshotMimeType = result.screenshotMimeType;
+  }
+
+  return formatted;
 }
