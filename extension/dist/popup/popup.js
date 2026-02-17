@@ -15,14 +15,16 @@ const state = {
     port: '5555',
     version: '0.1.0',
     projectName: null,
+    domainWhitelistEnabled: false,
 };
 async function loadState() {
     const result = await browserAPI.storage.local.get([
-        'extensionEnabled', 'mcpPort', 'debugMode',
+        'extensionEnabled', 'mcpPort', 'debugMode', 'domainWhitelistEnabled',
     ]);
     state.enabled = result.extensionEnabled !== false;
     state.port = result.mcpPort || '5555';
     state.debugMode = result.debugMode === true;
+    state.domainWhitelistEnabled = result.domainWhitelistEnabled === true;
     const manifest = browserAPI.runtime.getManifest();
     state.version = manifest.version;
 }
@@ -53,7 +55,12 @@ async function saveSettings() {
     await browserAPI.storage.local.set({
         mcpPort: state.port,
         debugMode: state.debugMode,
+        domainWhitelistEnabled: state.domainWhitelistEnabled,
     });
+    // Notify background to enable/disable whitelist
+    browserAPI.runtime.sendMessage({
+        type: state.domainWhitelistEnabled ? 'enableWhitelist' : 'disableWhitelist',
+    }).catch(() => { });
     state.showSettings = false;
     render();
 }
@@ -78,6 +85,9 @@ function attachEventListeners() {
         document.getElementById('debugModeCheckbox')?.addEventListener('change', (e) => {
             state.debugMode = e.target.checked;
         });
+        document.getElementById('domainWhitelistCheckbox')?.addEventListener('change', (e) => {
+            state.domainWhitelistEnabled = e.target.checked;
+        });
     }
     else {
         document.getElementById('toggleButton')?.addEventListener('click', toggleEnabled);
@@ -101,6 +111,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (areaName === 'local') {
                 if (changes.extensionEnabled) {
                     state.enabled = changes.extensionEnabled.newValue !== false;
+                    render();
+                }
+                if (changes.domainWhitelistEnabled) {
+                    state.domainWhitelistEnabled = changes.domainWhitelistEnabled.newValue === true;
                     render();
                 }
             }

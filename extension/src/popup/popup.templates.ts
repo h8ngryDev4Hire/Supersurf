@@ -13,6 +13,7 @@ export interface PopupState {
   port: string;
   version: string;
   projectName: string | null;
+  domainWhitelistEnabled: boolean;
 }
 
 export function renderMain(state: PopupState): string {
@@ -113,6 +114,21 @@ export function renderSettings(state: PopupState): string {
             </label>
             <p class="settings-help" style="margin-top: 4px; margin-left: 24px">
               Enable detailed logging for troubleshooting
+            </p>
+          </div>
+
+          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0">
+            <label class="settings-label" style="flex-direction: row; align-items: center; cursor: pointer">
+              <input
+                type="checkbox"
+                id="domainWhitelistCheckbox"
+                ${state.domainWhitelistEnabled ? 'checked' : ''}
+                style="width: 16px; height: 16px; margin-right: 8px; cursor: pointer"
+              />
+              <span>Domain Whitelist</span>
+            </label>
+            <p class="settings-help" style="margin-top: 4px; margin-left: 24px">
+              Restrict automated navigation to Tranco top 100K domains
             </p>
           </div>
         </div>

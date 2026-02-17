@@ -17,6 +17,7 @@ import { waitForDOMStable } from './experimental/wait-for-ready.js';
 import { registerMouseHandlers, handleIdleDrift } from './experimental/mouse-humanization.js';
 import { registerSecureEvalHandlers } from './experimental/secure-eval/index.js';
 import { SessionContext } from './session-context.js';
+import { DomainWhitelist } from './domain-whitelist.js';
 // chrome.debugger is a reserved word — access via bracket notation
 const chromeDebugger = chrome['debugger'];
 // Top-level variables
@@ -49,6 +50,40 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         });
     }
 });
+// Domain whitelist — initialized in IIFE, referenced by top-level listener
+let domainWhitelist = null;
+// Register webNavigation.onBeforeNavigate at TOP LEVEL for MV3 persistence
+chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+    // Only check top-level navigations on the managed tab
+    if (details.frameId !== 0)
+        return;
+    if (!domainWhitelist || !tabHandlers)
+        return;
+    const attachedTabId = tabHandlers.getAttachedTabId();
+    if (details.tabId !== attachedTabId)
+        return;
+    if (!domainWhitelist.isDomainAllowed(details.url)) {
+        // onBeforeNavigate fires before the navigation commits — the tab is
+        // still on the previous page. Navigate back to it to cancel the block.
+        try {
+            const tab = await chrome.tabs.get(details.tabId);
+            await chrome.tabs.update(details.tabId, { url: tab.url || 'about:blank' });
+        }
+        catch {
+            try {
+                await chrome.tabs.update(details.tabId, { url: 'about:blank' });
+            }
+            catch { /* last resort, ignore */ }
+        }
+        // Notify server
+        if (wsConnection?.isConnected) {
+            wsConnection.sendNotification('notifications/navigation_blocked', {
+                url: details.url,
+                message: 'Domain not allowed.',
+            });
+        }
+    }
+});
 // ── Main initialization ──
 (async () => {
     const logger = new Logger('SuperSurf');
@@ -68,6 +103,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     consoleHandler.setupMessageListener();
     iconManager.init();
     networkTracker.init();
+    // Domain whitelist
+    domainWhitelist = new DomainWhitelist();
+    await domainWhitelist.init();
     // State
     let techStackInfo = {};
     const cdpNetworkRequests = new Map();
@@ -76,6 +114,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     if (chrome.alarms) {
         // Keepalive fires every minute — always checks connection
         chrome.alarms.create('keepalive', { periodInMinutes: 0.5 });
+        // Daily whitelist refresh
+        chrome.alarms.create('whitelist-refresh', { periodInMinutes: 24 * 60 });
         chrome.alarms.onAlarm.addListener((alarm) => {
             if (alarm.name === 'keepalive') {
                 logger.log('[Background] Keepalive tick, connected=' + wsConnection.isConnected);
@@ -87,6 +127,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             else if (alarm.name === 'ws-reconnect') {
                 logger.log('[Background] Reconnect alarm fired');
                 wsConnection.handleReconnectAlarm();
+            }
+            else if (alarm.name === 'whitelist-refresh') {
+                if (domainWhitelist?.enabled) {
+                    domainWhitelist.refreshList().catch(() => { });
+                }
             }
             else if (alarm.name === 'mouse-idle-drift') {
                 handleIdleDrift(sessionContext, cdp).catch(() => { });
@@ -483,6 +528,18 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             chrome.storage.local.set({ extensionEnabled: false });
             wsConnection.disconnect();
             sendResponse({ ok: true });
+            return true;
+        }
+        if (message.type === 'enableWhitelist') {
+            domainWhitelist?.enable().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+            return true;
+        }
+        if (message.type === 'disableWhitelist') {
+            domainWhitelist?.disable().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+            return true;
+        }
+        if (message.type === 'getWhitelistStats') {
+            sendResponse(domainWhitelist?.getStats() || { enabled: false, domainCount: 0, lastFetch: 0 });
             return true;
         }
         return false;

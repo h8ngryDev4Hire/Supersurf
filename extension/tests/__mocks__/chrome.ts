@@ -34,6 +34,7 @@ export function createMockChrome() {
       })),
       update: vi.fn(async () => ({})),
       remove: vi.fn(async () => {}),
+      goBack: vi.fn(async () => {}),
       get: vi.fn(async (tabId: number) => ({
         id: tabId,
         index: 0,
@@ -92,6 +93,12 @@ export function createMockChrome() {
       create: vi.fn(),
       clear: vi.fn(),
       onAlarm: makeEvent(),
+    },
+
+    webNavigation: {
+      onBeforeNavigate: makeEvent(),
+      onCommitted: makeEvent(),
+      onCompleted: makeEvent(),
     },
 
     webRequest: {

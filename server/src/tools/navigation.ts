@@ -108,12 +108,21 @@ export async function onNavigate(ctx: ToolContext, args: any, options: any): Pro
       return ctx.error(`Unknown navigate action: ${action}`, options);
   }
 
+  // Extract screenshot data before formatResult serializes — prevents
+  // base64 blob from being dumped into a JSON text block
+  const screenshotData = result?.screenshotData;
+  const screenshotMimeType = result?.screenshotMimeType;
+  if (result) {
+    delete result.screenshotData;
+    delete result.screenshotMimeType;
+  }
+
   const formatted = ctx.formatResult('browser_navigate', result, options);
 
   // Forward pre-captured screenshot data for maybeAppendScreenshot
-  if (result?.screenshotData && formatted && !options.rawResult) {
-    formatted._screenshotData = result.screenshotData;
-    formatted._screenshotMimeType = result.screenshotMimeType;
+  if (screenshotData && formatted && !options.rawResult) {
+    formatted._screenshotData = screenshotData;
+    formatted._screenshotMimeType = screenshotMimeType;
   }
 
   return formatted;

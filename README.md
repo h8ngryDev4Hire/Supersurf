@@ -29,6 +29,7 @@ Unlike tools that spin up headless browsers or inject CDP scripts, SuperSurf use
 - **Session multiplexing** (experimental) — Multiple MCP clients share one browser. A leader/follower architecture with tab ownership tracking and round-robin scheduling keeps sessions isolated.
 - **Framework detection** — Content script identifies 40+ frontend frameworks and libraries on any page, giving the agent context about what it's working with.
 - **CI-ready** — Sideload the extension with `--load-extension` and a throwaway profile. No manual setup needed for automation pipelines.
+- **Domain whitelist** — Optional navigation restriction using the Tranco top 100K list. When enabled, automated navigation is limited to known-legitimate domains. Fetched once, cached locally, refreshed daily. Disabled by default, toggled via popup settings.
 - **Zero extension dependencies** — The Chrome extension uses browser APIs only. No bundled libraries, no supply chain surface.
 
 ## Why SuperSurf over Puppeteer/Selenium?
@@ -145,6 +146,8 @@ Once the MCP server is registered, your agent has access to browser tools. The t
 | `browser_performance_metrics` | Collect Web Vitals (FCP, LCP, CLS, TTFB) |
 | `browser_download` | Download a file via the browser |
 | `secure_fill` | Fill a field with a credential from an env var (agent never sees the value) |
+| `browser_storage` | Inspect and modify localStorage/sessionStorage (requires `storage_inspection` experiment) |
+| `reload_mcp` | Hot-reload the MCP server (debug mode only) |
 
 ### Experimental Features
 
@@ -160,7 +163,7 @@ Session-based features can be toggled with the `experimental_features` tool:
 - **smart_waiting** — Replaces fixed delays with adaptive DOM stability + network idle detection.
 - **storage_inspection** — Inspect and modify browser storage (localStorage, sessionStorage).
 - **mouse_humanization** — Replaces instant cursor teleportation with human-like Bezier trajectories, overshoot correction, and idle micro-movements. Uses hand-tuned constants from the Balabit Mouse Dynamics dataset.
-- **secure_eval** — Analyzes JavaScript in `browser_evaluate` for dangerous patterns (network calls, storage access, code injection, obfuscation) via AST parsing. Blocks unsafe code before execution.
+- **secure_eval** — Two-layer code analysis for `browser_evaluate`. Layer 1 (server): AST parsing via acorn to detect dangerous patterns (network calls, storage access, code injection, obfuscation). Layer 2 (extension): deep Proxy membrane that executes code against fake API surfaces — if blocked terminals (fetch, eval, localStorage, etc.) are reached, execution is stopped before it hits the real page.
 
 Infrastructure experiments (not session-toggleable, env var only):
 

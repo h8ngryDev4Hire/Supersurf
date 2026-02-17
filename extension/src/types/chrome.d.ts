@@ -57,6 +57,7 @@ declare namespace chrome {
     function remove(tabId: number): Promise<void>;
     function get(tabId: number): Promise<Tab>;
     function reload(tabId: number): Promise<void>;
+    function goBack(tabId: number): Promise<void>;
     function group(options: { tabIds: number | number[]; groupId?: number; createProperties?: { windowId?: number } }): Promise<number>;
     function ungroup(tabIds: number | number[]): Promise<void>;
     const onActivated: {
@@ -169,8 +170,20 @@ declare namespace chrome {
   }
 
   namespace webNavigation {
+    interface WebNavigationDetails {
+      tabId: number;
+      url: string;
+      frameId: number;
+      timeStamp: number;
+    }
+    const onBeforeNavigate: {
+      addListener(callback: (details: WebNavigationDetails) => void): void;
+    };
+    const onCommitted: {
+      addListener(callback: (details: WebNavigationDetails) => void): void;
+    };
     const onCompleted: {
-      addListener(callback: (details: any) => void): void;
+      addListener(callback: (details: WebNavigationDetails) => void): void;
     };
   }
 
