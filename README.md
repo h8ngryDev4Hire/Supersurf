@@ -207,4 +207,4 @@ chrome --load-extension=./extension --user-data-dir=/tmp/supersurf-profile
 
 ## License
 
-Apache-2.0
+Apache-2.0 with Commons Clause — free to use, modify, and redistribute, but not to sell.
