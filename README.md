@@ -1,8 +1,12 @@
 # SuperSurf
 
-MCP browser automation that gives AI agents control of a real Chrome browser.
+**MCP-native browser automation. Any agent. Any model. Real browser. Undetectable.**
 
-Unlike tools that spin up headless browsers or inject CDP scripts, SuperSurf uses a Chrome extension to interact with pages through content scripts. This means your agent operates in a real browser profile with your cookies, history, and localStorage intact — and page JavaScript can't detect it.
+Currently in beta.
+
+SuperSurf is an open-source MCP server that gives any AI agent control of a real Chrome browser. It works with any LLM that supports the [Model Context Protocol](https://modelcontextprotocol.io) — Claude, GPT, Gemini, open-source models, or your own.
+
+Unlike tools that spin up headless browsers or inject CDP scripts, SuperSurf uses a Chrome extension to interact with pages through content scripts. Your agent operates in a real browser profile with your cookies, history, and localStorage intact — and page JavaScript can't detect it.
 
 ## Table of Contents
 
