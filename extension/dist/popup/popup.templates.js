@@ -27,7 +27,7 @@ export function renderMain(state) {
         ${state.currentTabConnected && state.projectName ? `
           <div class="status-row">
             <span class="status-label"></span>
-            <span class="status-text" style="font-size: 0.9em; color: #666">
+            <span class="status-text" style="font-size: 0.9em; color: #777">
               ${state.projectName}
             </span>
           </div>
@@ -85,13 +85,13 @@ export function renderSettings(state) {
             Default: 5555. Change if your MCP server uses a different port.
           </p>
 
-          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0">
+          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2a30">
             <label class="settings-label" style="flex-direction: row; align-items: center; cursor: pointer">
               <input
                 type="checkbox"
                 id="debugModeCheckbox"
                 ${state.debugMode ? 'checked' : ''}
-                style="width: 16px; height: 16px; margin-right: 8px; cursor: pointer"
+                style="width: 16px; height: 16px; margin-right: 8px; cursor: pointer; accent-color: #c0c0c0"
               />
               <span>Debug Mode</span>
             </label>
@@ -100,13 +100,13 @@ export function renderSettings(state) {
             </p>
           </div>
 
-          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0">
+          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2a30">
             <label class="settings-label" style="flex-direction: row; align-items: center; cursor: pointer">
               <input
                 type="checkbox"
                 id="domainWhitelistCheckbox"
                 ${state.domainWhitelistEnabled ? 'checked' : ''}
-                style="width: 16px; height: 16px; margin-right: 8px; cursor: pointer"
+                style="width: 16px; height: 16px; margin-right: 8px; cursor: pointer; accent-color: #c0c0c0"
               />
               <span>Domain Whitelist</span>
             </label>
