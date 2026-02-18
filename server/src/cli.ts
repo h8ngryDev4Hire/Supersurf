@@ -14,7 +14,7 @@ import { ConnectionManager, BackendConfig } from './backend';
 import { getLogger, getRegistry, type DebugMode } from './logger';
 import { startScriptMode } from './stdio';
 
-const VERSION = '0.1.0';
+const { version: VERSION } = require('../package.json');
 
 /** Parse --debug value into a DebugMode. */
 function parseDebugMode(value: unknown): DebugMode {

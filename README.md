@@ -68,6 +68,8 @@ supersurf/
     src/           # Extension source (TypeScript)
     dist/          # Chrome extension (Manifest V3)
     manifest.json
+  scripts/
+    version.bump.ts  # Monorepo version bumping + git tag
 ```
 
 ## Prerequisites
@@ -93,9 +95,7 @@ npm install
 
 **Claude Code:**
 ```bash
-npm run mcp
-# or manually:
-claude mcp add supersurf -- node server/dist/cli.js
+claude mcp add supersurf -- npx supersurf-mcp@latest
 ```
 
 **Claude Desktop** — add to your MCP config:
@@ -103,11 +103,30 @@ claude mcp add supersurf -- node server/dist/cli.js
 {
   "mcpServers": {
     "supersurf": {
-      "command": "node",
-      "args": ["/absolute/path/to/supersurf/server/dist/cli.js"]
+      "command": "npx",
+      "args": ["supersurf-mcp@latest"]
     }
   }
 }
+```
+
+CLI flags can be appended to the args array:
+```json
+{
+  "mcpServers": {
+    "supersurf": {
+      "command": "npx",
+      "args": ["supersurf-mcp@latest", "--debug", "--port", "5555"]
+    }
+  }
+}
+```
+
+**From source** (for development):
+```bash
+npm run mcp
+# or manually:
+claude mcp add supersurf -- node server/dist/cli.js
 ```
 
 ## Usage

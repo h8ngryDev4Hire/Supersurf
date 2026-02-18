@@ -25,6 +25,9 @@ logs/
 # TypeScript
 *.tsbuildinfo
 
+# Zip files
+*.zip
+
 # OS
 .DS_Store
 Thumbs.db

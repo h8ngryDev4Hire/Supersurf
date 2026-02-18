@@ -13,7 +13,7 @@ const stream_1 = require("stream");
 const backend_1 = require("./backend");
 const logger_1 = require("./logger");
 const stdio_1 = require("./stdio");
-const VERSION = '0.1.0';
+const { version: VERSION } = require('../package.json');
 /** Parse --debug value into a DebugMode. */
 function parseDebugMode(value) {
     if (value === 'no_truncate')

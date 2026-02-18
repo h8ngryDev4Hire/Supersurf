@@ -1,20 +1,51 @@
 {
-  "name": "@supersurf/server",
-  "version": "0.1.0",
-  "description": "MCP server for SuperSurf browser automation",
+  "name": "supersurf-mcp",
+  "version": "0.6.3",
+  "description": "MCP server for browser automation — gives AI agents control of a real Chrome browser via extension",
   "main": "dist/cli.js",
+  "types": "dist/cli.d.ts",
   "bin": {
-    "supersurf": "dist/cli.js"
+    "supersurf-mcp": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=18"
   },
   "license": "Apache-2.0",
+  "author": "The Media Masons",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/h8ngryDev4Hire/Supersurf.git",
+    "directory": "server"
+  },
+  "homepage": "https://github.com/h8ngryDev4Hire/Supersurf#readme",
+  "bugs": {
+    "url": "https://github.com/h8ngryDev4Hire/Supersurf/issues"
+  },
+  "keywords": [
+    "mcp",
+    "browser-automation",
+    "chrome-extension",
+    "ai-agent",
+    "model-context-protocol",
+    "claude",
+    "web-automation",
+    "supersurf"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "clean": "rm -rf dist",
     "build": "tsc",
+    "prepublishOnly": "cp ../LICENSE . && npm run clean && npm run build",
     "dev": "npx tsx src/cli.ts --debug",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test.watch": "vitest"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
