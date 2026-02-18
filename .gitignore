@@ -7,11 +7,6 @@ research/
 # Dependencies
 node_modules/
 
-# source files
-#src/
-
-# test files
-tests/
 
 # Logs
 logs/

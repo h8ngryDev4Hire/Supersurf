@@ -1,0 +1,158 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { buildMembrane } from '../../../src/experimental/secure-eval/membrane';
+import { registerSecureEvalHandlers } from '../../../src/experimental/secure-eval/index';
+
+// ── buildMembrane unit tests ──
+
+describe('buildMembrane', () => {
+  it('throws on blocked terminal access', () => {
+    const membrane = buildMembrane();
+    expect(() => (membrane as any).fetch).toThrow('[secure_eval:membrane] Blocked: fetch');
+  });
+
+  it('throws on deep chain reaching blocked terminal', () => {
+    const membrane = buildMembrane();
+    expect(() => (membrane as any).document.querySelector.fetch).toThrow(
+      '[secure_eval:membrane] Blocked: document.querySelector.fetch'
+    );
+  });
+
+  it('returns proxy for non-blocked access', () => {
+    const membrane = buildMembrane();
+    // Should not throw
+    const result = (membrane as any).document;
+    expect(result).toBeDefined();
+    expect(typeof result).toBe('function'); // Proxy wraps a function target
+  });
+
+  it('has trap returns true for all props', () => {
+    const membrane = buildMembrane();
+    expect('fetch' in membrane).toBe(true);
+    expect('anyProp' in membrane).toBe(true);
+    expect('nonexistent' in membrane).toBe(true);
+  });
+
+  it('throws on blocked terminal set', () => {
+    const membrane = buildMembrane();
+    expect(() => { (membrane as any).fetch = 42; }).toThrow('[secure_eval:membrane]');
+  });
+
+  it('allows set on non-blocked props', () => {
+    const membrane = buildMembrane();
+    // Should not throw
+    (membrane as any).safeVar = 42;
+  });
+
+  it('apply trap returns proxy for intermediate calls', () => {
+    const membrane = buildMembrane();
+    // querySelector() should return another proxy, not throw
+    const result = (membrane as any).document.querySelector('h1');
+    expect(result).toBeDefined();
+  });
+
+  it('throws on blocked terminal after intermediate call', () => {
+    const membrane = buildMembrane();
+    expect(() => (membrane as any).navigator.sendBeacon).toThrow('[secure_eval:membrane]');
+  });
+
+  it('accepts custom blocked set', () => {
+    const custom = new Set(['myDangerous']);
+    const membrane = buildMembrane(custom);
+    // Default blocked items should be allowed
+    expect(() => (membrane as any).fetch).not.toThrow();
+    // Custom blocked item should throw
+    expect(() => (membrane as any).myDangerous).toThrow('[secure_eval:membrane]');
+  });
+});
+
+// ── validateEval handler tests ──
+
+function createMockWsConnection() {
+  const handlers = new Map<string, Function>();
+  return {
+    registerCommandHandler: vi.fn((name: string, handler: Function) => {
+      handlers.set(name, handler);
+    }),
+    _getHandler: (name: string) => handlers.get(name),
+    isConnected: true,
+  } as any;
+}
+
+describe('validateEval handler', () => {
+  let wsConnection: ReturnType<typeof createMockWsConnection>;
+  let validateEval: (params: any) => Promise<any>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    wsConnection = createMockWsConnection();
+    registerSecureEvalHandlers(wsConnection);
+    validateEval = wsConnection._getHandler('validateEval') as any;
+  });
+
+  it('registers the validateEval handler', () => {
+    expect(wsConnection.registerCommandHandler).toHaveBeenCalledWith(
+      'validateEval',
+      expect.any(Function)
+    );
+  });
+
+  it('returns safe for empty code', async () => {
+    expect(await validateEval({ code: '' })).toEqual({ safe: true });
+    expect(await validateEval({ code: '   ' })).toEqual({ safe: true });
+    expect(await validateEval({})).toEqual({ safe: true });
+  });
+
+  it('catches fetch() via membrane', async () => {
+    const result = await validateEval({ code: "fetch('/api')" });
+    expect(result.safe).toBe(false);
+    expect(result.reason).toContain('[secure_eval:membrane]');
+    expect(result.reason).toContain('fetch');
+  });
+
+  it('catches comma operator bypass (0, fetch)()', async () => {
+    const result = await validateEval({ code: "(0, fetch)('/api')" });
+    expect(result.safe).toBe(false);
+    expect(result.reason).toContain('fetch');
+  });
+
+  it('allows safe DOM queries', async () => {
+    const result = await validateEval({ code: "document.querySelector('h1')" });
+    expect(result.safe).toBe(true);
+  });
+
+  it('returns safe for syntax errors (pass through to page)', async () => {
+    const result = await validateEval({ code: 'function {' });
+    expect(result.safe).toBe(true);
+  });
+
+  it('returns safe for runtime errors in safe code', async () => {
+    // This will throw because membrane proxies can't actually run real DOM code,
+    // but the error is NOT a membrane block, so it's safe
+    const result = await validateEval({ code: "document.querySelector('h1').textContent" });
+    expect(result.safe).toBe(true);
+  });
+
+  it('catches localStorage access', async () => {
+    const result = await validateEval({ code: "localStorage.getItem('key')" });
+    expect(result.safe).toBe(false);
+    expect(result.reason).toContain('localStorage');
+  });
+
+  it('catches aliased fetch via variable', async () => {
+    const result = await validateEval({ code: "const f = fetch; f('/api')" });
+    expect(result.safe).toBe(false);
+    expect(result.reason).toContain('fetch');
+  });
+
+  it('catches eval()', async () => {
+    const result = await validateEval({ code: "eval('alert(1)')" });
+    expect(result.safe).toBe(false);
+    expect(result.reason).toContain('eval');
+  });
+
+  it('catches new WebSocket via Function constructor', async () => {
+    const result = await validateEval({ code: "Function('return fetch')()('/api')" });
+    expect(result.safe).toBe(false);
+    expect(result.reason).toContain('Function');
+  });
+});
