@@ -1,7 +1,7 @@
 {
   "name": "supersurf-mcp",
-  "version": "0.6.5",
-  "description": "MCP server for browser automation — gives AI agents control of a real Chrome browser via extension",
+  "version": "0.6.6",
+  "description": "Open-source MCP server for browser automation — gives AI agents control of a real Chrome browser via extension",
   "main": "dist/cli.js",
   "types": "dist/cli.d.ts",
   "bin": {
@@ -22,7 +22,7 @@
     "url": "https://github.com/h8ngryDev4Hire/Supersurf.git",
     "directory": "server"
   },
-  "homepage": "https://github.com/h8ngryDev4Hire/Supersurf#readme",
+  "homepage": "https://h8ngryDev4Hire.github.io/Supersurf",
   "bugs": {
     "url": "https://github.com/h8ngryDev4Hire/Supersurf/issues"
   },
