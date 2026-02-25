@@ -1,6 +1,6 @@
 {
   "name": "supersurf-mcp",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Open-source MCP server for browser automation — gives AI agents control of a real Chrome browser via extension",
   "main": "dist/cli.js",
   "types": "dist/cli.d.ts",
@@ -19,12 +19,12 @@
   "author": "The Media Masons",
   "repository": {
     "type": "git",
-    "url": "https://github.com/h8ngryDev4Hire/Supersurf.git",
+    "url": "https://github.com/liquidbuiltit/Supersurf.git",
     "directory": "server"
   },
-  "homepage": "https://h8ngryDev4Hire.github.io/Supersurf",
+  "homepage": "https://liquidbuiltit.github.io/Supersurf",
   "bugs": {
-    "url": "https://github.com/h8ngryDev4Hire/Supersurf/issues"
+    "url": "https://github.com/liquidbuiltit/Supersurf/issues"
   },
   "keywords": [
     "mcp",
