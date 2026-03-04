@@ -1,7 +1,7 @@
 /**
  * Connection-level tool schema definitions.
  *
- * Defines MCP tool schemas for the four connection management tools (enable, disable,
+ * Defines MCP tool schemas for the four connection management tools (connect, disconnect,
  * status, experimental_features) and the debug-only reload tool. These are always
  * available regardless of connection state, unlike browser tools which require an
  * active extension connection.
@@ -13,13 +13,13 @@
 
 import type { ToolSchema } from './types';
 
-/** Return MCP tool schemas for enable, disable, status, and experimental_features. */
+/** Return MCP tool schemas for connect, disconnect, status, and experimental_features. */
 export function getConnectionToolSchemas(): ToolSchema[] {
   return [
     {
-      name: 'enable',
+      name: 'connect',
       description:
-        'Start browser automation. Spins up the WebSocket server and waits for the extension to connect. Pass a client_id to identify this session.',
+        'Connect to the SuperSurf daemon and start browser automation. The daemon coordinates multiple sessions sharing one Chrome extension. Pass a client_id to identify this session.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -32,19 +32,19 @@ export function getConnectionToolSchemas(): ToolSchema[] {
         required: ['client_id'],
       },
       annotations: {
-        title: 'Enable browser automation',
+        title: 'Connect to browser',
         readOnlyHint: false,
         destructiveHint: false,
         openWorldHint: false,
       },
     },
     {
-      name: 'disable',
+      name: 'disconnect',
       description:
-        'Stop browser automation. Tears down the WebSocket connection and returns to passive mode.',
+        'Disconnect this session from the SuperSurf daemon. The daemon stays alive for other sessions.',
       inputSchema: { type: 'object', properties: {}, required: [] },
       annotations: {
-        title: 'Disable browser automation',
+        title: 'Disconnect from browser',
         readOnlyHint: false,
         destructiveHint: false,
         openWorldHint: false,

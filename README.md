@@ -10,18 +10,20 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-8A2BE2?style=flat-square)](https://modelcontextprotocol.io)
 [![Chrome Web Store](https://img.shields.io/badge/Chrome_Web_Store-Install-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/falcdhojcinkkbffgnipppcdoaehgpek)
-[![Tools](https://img.shields.io/badge/30%2B-browser%20tools-FF6F00?style=flat-square)](https://github.com/h8ngryDev4Hire/Supersurf#tools)
+[![Tools](https://img.shields.io/badge/30%2B-browser%20tools-FF6F00?style=flat-square)](https://github.com/liquidbuiltit/Supersurf#tools)
 
 <br />
 
 ```mermaid
 graph LR
     A["AI Agent"] -->|stdio| B["MCP Server"]
-    B -->|WebSocket| C["Chrome Extension"]
+    B -->|Unix socket| E["Daemon"]
+    E -->|WebSocket| C["Chrome Extension"]
     C -->|Content Scripts| D["Browser"]
 
     style A fill:#8A2BE2,stroke:#6A1B9A,color:#fff
     style B fill:#339933,stroke:#1B5E20,color:#fff
+    style E fill:#1B5E20,stroke:#0D3B14,color:#fff
     style C fill:#4285F4,stroke:#1565C0,color:#fff
     style D fill:#FF6F00,stroke:#E65100,color:#fff
 ```
@@ -144,7 +146,7 @@ claude mcp add supersurf -- node server/dist/cli.js
 | **Real browser profile** | Your agent browses with your actual cookies, history, localStorage, and extensions. No sterile headless environment. |
 | **Secure credential handling** | `secure_fill` injects passwords from environment variables directly in the extension. The agent sends an env var *name*, never the value. |
 | **30+ browser tools** | Full coverage: navigation, interaction, screenshots, network monitoring, console access, form filling, CSS inspection, PDF export, performance metrics, file downloads. |
-| **Session multiplexing** | Multiple MCP clients share one browser. Leader/follower architecture with tab ownership tracking and round-robin scheduling. |
+| **Session multiplexing** | Multiple MCP clients share one browser through a daemon process with tab ownership tracking and round-robin scheduling. The daemon is automatically spawned by the MCP server — no setup required. |
 | **Framework detection** | Content script identifies 40+ frontend frameworks and libraries on any page. |
 | **CI-ready** | Sideload the extension with `--load-extension` and a throwaway profile. No manual setup needed. |
 | **Domain whitelist** | Optional navigation restriction using the Tranco top 100K list. Fetched once, cached locally, refreshed daily. |
@@ -162,8 +164,8 @@ claude mcp add supersurf -- node server/dist/cli.js
 
 | Tool | Description |
 |------|-------------|
-| `enable` | Start browser automation session |
-| `disable` | Stop browser automation session |
+| `connect` | Connect to the browser daemon |
+| `disconnect` | Disconnect from the browser daemon |
 | `status` | Show connection state |
 | `experimental_features` | Toggle experimental features |
 
@@ -251,7 +253,6 @@ SUPERSURF_EXPERIMENTS=page_diffing,smart_waiting,mouse_humanization
 | **storage_inspection** | Inspect and modify browser storage (localStorage, sessionStorage). |
 | **mouse_humanization** | Human-like Bezier trajectories, overshoot correction, and idle micro-movements. Hand-tuned from the Balabit Mouse Dynamics dataset. |
 | **secure_eval** | Two-layer code analysis for `browser_evaluate`. Server-side AST parsing + extension-side Proxy membrane that blocks dangerous API access before execution. |
-| **multiplexer** | Session multiplexing for concurrent MCP clients. Leader/follower architecture with tab ownership. *(env var only)* |
 
 ---
 
@@ -289,6 +290,6 @@ All WebSocket commands log params and responses. CDP passthrough unwraps to show
 
 **100% Open Source** — Apache-2.0 with Commons Clause. Free to use, modify, and redistribute, but not to sell.
 
-Built by [The Media Masons](https://github.com/h8ngryDev4Hire)
+Built by [The Media Masons](https://github.com/liquidbuiltit)
 
 </div>

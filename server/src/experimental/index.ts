@@ -12,7 +12,6 @@
  *
  * Key exports:
  * - {@link experimentRegistry} — singleton registry instance
- * - {@link isInfraExperimentEnabled} — check env-var-gated infrastructure experiments
  * - {@link applyInitialState} — pre-enable experiments from startup config
  * - {@link getExperimentalToolSchemas} — collect MCP tool schemas from experimental modules
  * - {@link callExperimentalTool} — route experimental tool calls to handlers
@@ -89,20 +88,8 @@ class ExperimentRegistry {
 export const experimentRegistry = new ExperimentRegistry();
 
 /**
- * Check if an infrastructure-level experiment (e.g. "multiplexer") is enabled via env var.
- * Infrastructure experiments are gated at startup, not session-toggleable.
- */
-export function isInfraExperimentEnabled(
-  feature: string,
-  config: { enabledExperiments?: string[] }
-): boolean {
-  if (!config.enabledExperiments) return false;
-  return config.enabledExperiments.includes(feature);
-}
-
-/**
  * Pre-enable session features listed in the env var config.
- * Silently skips infra features (like "multiplexer") that aren't in AVAILABLE_EXPERIMENTS.
+ * Silently skips feature names that aren't in AVAILABLE_EXPERIMENTS.
  */
 export function applyInitialState(config: { enabledExperiments?: string[] }): void {
   if (!config.enabledExperiments) return;

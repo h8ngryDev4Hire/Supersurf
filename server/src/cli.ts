@@ -155,8 +155,8 @@ function setupExitWatchdog(backend: ConnectionManager, server: Server): void {
   process.on('SIGTERM', cleanup);
 }
 
-/** Idle timeout — shuts down the server if no tool calls for 60s while active. */
-const IDLE_TIMEOUT_MS = 60_000;
+/** Idle timeout — shuts down the server if no tool calls for 120s while active. */
+const IDLE_TIMEOUT_MS = 120_000;
 
 function setupIdleTimeout(backend: ConnectionManager): void {
   let idleTimer: ReturnType<typeof setTimeout> | null = null;

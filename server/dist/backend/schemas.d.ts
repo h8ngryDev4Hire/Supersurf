@@ -1,7 +1,7 @@
 /**
  * Connection-level tool schema definitions.
  *
- * Defines MCP tool schemas for the four connection management tools (enable, disable,
+ * Defines MCP tool schemas for the four connection management tools (connect, disconnect,
  * status, experimental_features) and the debug-only reload tool. These are always
  * available regardless of connection state, unlike browser tools which require an
  * active extension connection.
@@ -11,7 +11,7 @@
  * @exports getDebugToolSchema - Returns the reload_mcp schema (debug mode only)
  */
 import type { ToolSchema } from './types';
-/** Return MCP tool schemas for enable, disable, status, and experimental_features. */
+/** Return MCP tool schemas for connect, disconnect, status, and experimental_features. */
 export declare function getConnectionToolSchemas(): ToolSchema[];
 /** Return the reload_mcp tool schema. Only exposed when `--debug` is active. */
 export declare function getDebugToolSchema(): ToolSchema;

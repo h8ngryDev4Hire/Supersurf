@@ -28,29 +28,35 @@ vi.mock('../src/experimental/index', () => ({
     reset: vi.fn(),
     getStates: vi.fn().mockReturnValue({ page_diffing: false, smart_waiting: false }),
   },
-  isInfraExperimentEnabled: vi.fn().mockReturnValue(false),
   applyInitialState: vi.fn(),
 }));
 
-// Mock ExtensionServer (now in bridge.ts)
-const mockExtensionServerInstance = {
+// Mock DaemonClient (replaces ExtensionServer mock)
+const mockDaemonClientInstance = {
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn().mockResolvedValue(undefined),
   notifyClientId: vi.fn(),
-  connected: false,
+  sendCmd: vi.fn().mockResolvedValue(undefined),
+  connected: true,
   buildTime: null as string | null,
   browser: 'chrome',
   onReconnect: null as (() => void) | null,
   onTabInfoUpdate: null as ((tabInfo: any) => void) | null,
 };
 
-vi.mock('../src/bridge', () => ({
-  ExtensionServer: vi.fn(function () {
-    return mockExtensionServerInstance;
+vi.mock('../src/daemon-client', () => ({
+  DaemonClient: vi.fn(function () {
+    return mockDaemonClientInstance;
   }),
 }));
 
-// Mock the tools module (lazy import) — now BrowserBridge
+// Mock daemon-spawn
+vi.mock('../src/daemon-spawn', () => ({
+  ensureDaemon: vi.fn().mockResolvedValue(undefined),
+  getSockPath: vi.fn().mockReturnValue('/tmp/test-daemon.sock'),
+}));
+
+// Mock the tools module (lazy import) — BrowserBridge
 const mockBridgeInstance = {
   initialize: vi.fn().mockResolvedValue(undefined),
   listTools: vi.fn().mockResolvedValue([
@@ -91,12 +97,13 @@ describe('ConnectionManager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset mock state for ExtensionServer instance
-    mockExtensionServerInstance.start.mockResolvedValue(undefined);
-    mockExtensionServerInstance.stop.mockResolvedValue(undefined);
-    mockExtensionServerInstance.buildTime = null;
-    mockExtensionServerInstance.onReconnect = null;
-    mockExtensionServerInstance.onTabInfoUpdate = null;
+    // Reset mock state for DaemonClient instance
+    mockDaemonClientInstance.start.mockResolvedValue(undefined);
+    mockDaemonClientInstance.stop.mockResolvedValue(undefined);
+    mockDaemonClientInstance.buildTime = null;
+    mockDaemonClientInstance.browser = 'chrome';
+    mockDaemonClientInstance.onReconnect = null;
+    mockDaemonClientInstance.onTabInfoUpdate = null;
 
     backend = new ConnectionManager(makeConfig());
   });
@@ -127,21 +134,21 @@ describe('ConnectionManager', () => {
       const clientInfo = { name: 'test-client', version: '1.0' };
       await backend.initialize(server, clientInfo);
 
-      // Verify server is stored by enabling — it should call sendToolsListChanged
-      await backend.callTool('enable', { client_id: 'test' });
+      // Verify server is stored by connecting — it should call sendToolsListChanged
+      await backend.callTool('connect', { client_id: 'test' });
       expect(server.sendToolsListChanged).toHaveBeenCalled();
     });
   });
 
-  // ---- callTool('enable') ----
+  // ---- callTool('connect') ----
 
-  describe('callTool("enable")', () => {
+  describe('callTool("connect")', () => {
     beforeEach(async () => {
       await backend.initialize(makeMockServer(), {});
     });
 
     it('transitions to active state', async () => {
-      const result = await backend.callTool('enable', { client_id: 'my-project' }, { rawResult: true });
+      const result = await backend.callTool('connect', { client_id: 'my-project' }, { rawResult: true });
 
       expect(result.success).toBe(true);
       expect(result.state).toBe('active');
@@ -149,122 +156,115 @@ describe('ConnectionManager', () => {
       expect(result.port).toBe(5555);
     });
 
-    it('starts ExtensionServer', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
-      expect(mockExtensionServerInstance.start).toHaveBeenCalled();
-    });
+    it('spawns daemon and creates DaemonClient', async () => {
+      const { ensureDaemon } = await import('../src/daemon-spawn');
+      const { DaemonClient } = await import('../src/daemon-client');
 
-    it('notifies client ID on ExtensionServer', async () => {
-      await backend.callTool('enable', { client_id: 'my-project' });
-      expect(mockExtensionServerInstance.notifyClientId).toHaveBeenCalledWith('my-project');
+      await backend.callTool('connect', { client_id: 'test' });
+
+      expect(ensureDaemon).toHaveBeenCalled();
+      expect(DaemonClient).toHaveBeenCalled();
+      expect(mockDaemonClientInstance.start).toHaveBeenCalled();
     });
 
     it('returns error without client_id', async () => {
-      const result = await backend.callTool('enable', {}, { rawResult: true });
+      const result = await backend.callTool('connect', {}, { rawResult: true });
       expect(result.success).toBe(false);
       expect(result.error).toBe('missing_client_id');
     });
 
     it('returns error with empty client_id', async () => {
-      const result = await backend.callTool('enable', { client_id: '   ' }, { rawResult: true });
+      const result = await backend.callTool('connect', { client_id: '   ' }, { rawResult: true });
       expect(result.success).toBe(false);
       expect(result.error).toBe('missing_client_id');
     });
 
     it('returns MCP-formatted error without client_id when rawResult is false', async () => {
-      const result = await backend.callTool('enable', {});
+      const result = await backend.callTool('connect', {});
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('client_id');
     });
 
-    it('returns "already enabled" when already active', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
+    it('returns "already connected" when already active', async () => {
+      await backend.callTool('connect', { client_id: 'test' });
 
-      const result = await backend.callTool('enable', { client_id: 'test' }, { rawResult: true });
-      expect(result.already_enabled).toBe(true);
+      const result = await backend.callTool('connect', { client_id: 'test' }, { rawResult: true });
+      expect(result.already_connected).toBe(true);
       expect(result.state).toBe('active');
     });
 
-    it('returns MCP-formatted "already enabled" when rawResult is false', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
+    it('returns MCP-formatted "already connected" when rawResult is false', async () => {
+      await backend.callTool('connect', { client_id: 'test' });
 
-      const result = await backend.callTool('enable', { client_id: 'other' });
-      expect(result.content[0].text).toContain('Already Enabled');
+      const result = await backend.callTool('connect', { client_id: 'other' });
+      expect(result.content[0].text).toContain('Already Connected');
     });
 
     it('initializes BrowserBridge with correct args', async () => {
       const { BrowserBridge } = await import('../src/tools');
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       expect(BrowserBridge).toHaveBeenCalled();
       expect(mockBridgeInstance.initialize).toHaveBeenCalled();
     });
 
-    it('handles start failure gracefully', async () => {
-      mockExtensionServerInstance.start.mockRejectedValueOnce(new Error('EADDRINUSE'));
+    it('handles daemon connection failure gracefully', async () => {
+      mockDaemonClientInstance.start.mockRejectedValueOnce(new Error('Connection refused'));
 
-      const result = await backend.callTool('enable', { client_id: 'test' }, { rawResult: true });
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('port_in_use');
-    });
-
-    it('handles non-port start failure', async () => {
-      mockExtensionServerInstance.start.mockRejectedValueOnce(new Error('Something else'));
-
-      const result = await backend.callTool('enable', { client_id: 'test' }, { rawResult: true });
+      const result = await backend.callTool('connect', { client_id: 'test' }, { rawResult: true });
       expect(result.success).toBe(false);
       expect(result.error).toBe('connection_failed');
     });
 
     it('trims whitespace from client_id', async () => {
-      const result = await backend.callTool('enable', { client_id: '  trimmed  ' }, { rawResult: true });
+      const result = await backend.callTool('connect', { client_id: '  trimmed  ' }, { rawResult: true });
       expect(result.client_id).toBe('trimmed');
     });
   });
 
-  // ---- callTool('disable') ----
+  // ---- callTool('disconnect') ----
 
-  describe('callTool("disable")', () => {
+  describe('callTool("disconnect")', () => {
     beforeEach(async () => {
       await backend.initialize(makeMockServer(), {});
     });
 
     it('transitions back to passive from active', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
-      const result = await backend.callTool('disable', {}, { rawResult: true });
+      await backend.callTool('connect', { client_id: 'test' });
+      const result = await backend.callTool('disconnect', {}, { rawResult: true });
 
       expect(result.success).toBe(true);
       expect(result.state).toBe('passive');
     });
 
-    it('stops ExtensionServer on disable', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
-      await backend.callTool('disable');
-      expect(mockExtensionServerInstance.stop).toHaveBeenCalled();
+    it('stops DaemonClient on disconnect', async () => {
+      await backend.callTool('connect', { client_id: 'test' });
+      await backend.callTool('disconnect');
+      expect(mockDaemonClientInstance.stop).toHaveBeenCalled();
     });
 
     it('calls serverClosed on bridge', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
-      await backend.callTool('disable');
+      await backend.callTool('connect', { client_id: 'test' });
+      await backend.callTool('disconnect');
       expect(mockBridgeInstance.serverClosed).toHaveBeenCalled();
     });
 
-    it('returns "already disabled" when passive', async () => {
-      const result = await backend.callTool('disable', {}, { rawResult: true });
-      expect(result.already_disabled).toBe(true);
+    it('returns "already disconnected" when passive', async () => {
+      const result = await backend.callTool('disconnect', {}, { rawResult: true });
+      expect(result.already_disconnected).toBe(true);
       expect(result.state).toBe('passive');
     });
 
-    it('returns MCP-formatted "already disabled" when rawResult is false', async () => {
-      const result = await backend.callTool('disable');
-      expect(result.content[0].text).toContain('Already Disabled');
+    it('returns MCP-formatted "already disconnected" when rawResult is false', async () => {
+      const result = await backend.callTool('disconnect');
+      expect(result.content[0].text).toContain('Already Disconnected');
     });
 
     it('clears attached tab and browser name', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       backend.setAttachedTab({ id: 1, index: 0, title: 'Test', url: 'http://test.com' });
       backend.setConnectedBrowserName('Chrome');
 
-      await backend.callTool('disable');
+      await backend.callTool('disconnect');
 
       const status = await backend.callTool('status', {}, { rawResult: true });
       expect(status.attached_tab).toBeNull();
@@ -289,20 +289,20 @@ describe('ConnectionManager', () => {
 
     it('returns MCP-formatted passive status', async () => {
       const result = await backend.callTool('status');
-      expect(result.content[0].text).toContain('Disabled');
+      expect(result.content[0].text).toContain('Disconnected');
     });
 
     it('returns correct state info for active', async () => {
-      await backend.callTool('enable', { client_id: 'my-project' });
+      await backend.callTool('connect', { client_id: 'my-project' });
 
       const result = await backend.callTool('status', {}, { rawResult: true });
       expect(result.state).toBe('active');
-      expect(result.browser).toBe('Local Browser');
+      expect(result.browser).toBe('chrome');
       expect(result.client_id).toBe('my-project');
     });
 
     it('includes attached tab info when available', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       backend.setAttachedTab({ id: 1, index: 3, title: 'Google', url: 'https://google.com' });
 
       const result = await backend.callTool('status', {}, { rawResult: true });
@@ -314,7 +314,7 @@ describe('ConnectionManager', () => {
     });
 
     it('shows "No tab attached" in MCP format when no tab', async () => {
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
 
       const result = await backend.callTool('status');
       expect(result.content[0].text).toContain('No tab attached');
@@ -376,7 +376,7 @@ describe('ConnectionManager', () => {
   describe('callTool with browser tool when active', () => {
     beforeEach(async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
     });
 
     it('forwards to bridge', async () => {
@@ -442,17 +442,16 @@ describe('ConnectionManager', () => {
 
     it('returns correct format for active state without tab', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
 
       const header = backend.statusHeader();
       expect(header).toContain('v0.1.0');
       expect(header).toContain('No tab attached');
-      expect(header).toContain('Local Browser');
     });
 
     it('includes tab info when attached', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       backend.setAttachedTab({
         id: 1,
         index: 2,
@@ -467,7 +466,7 @@ describe('ConnectionManager', () => {
 
     it('truncates long URLs', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       backend.setAttachedTab({
         id: 1,
         index: 0,
@@ -480,7 +479,7 @@ describe('ConnectionManager', () => {
 
     it('includes tech stack info when present', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       backend.setAttachedTab({
         id: 1,
         index: 0,
@@ -500,7 +499,7 @@ describe('ConnectionManager', () => {
 
     it('includes obfuscated CSS warning', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       backend.setAttachedTab({
         id: 1,
         index: 0,
@@ -514,7 +513,7 @@ describe('ConnectionManager', () => {
 
     it('includes stealth indicator when stealth mode is on', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       backend.setStealthMode(true);
 
       const header = backend.statusHeader();
@@ -525,8 +524,8 @@ describe('ConnectionManager', () => {
       const debugBackend = new ConnectionManager(makeConfig({ debug: true }));
       await debugBackend.initialize(makeMockServer(), {});
 
-      mockExtensionServerInstance.buildTime = '2026-01-15T10:30:00.000Z';
-      await debugBackend.callTool('enable', { client_id: 'test' });
+      mockDaemonClientInstance.buildTime = '2026-01-15T10:30:00.000Z';
+      await debugBackend.callTool('connect', { client_id: 'test' });
 
       const header = debugBackend.statusHeader();
       expect(header).toContain('[');
@@ -559,7 +558,7 @@ describe('ConnectionManager', () => {
   describe('setConnectedBrowserName', () => {
     it('updates the browser name shown in status', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
       backend.setConnectedBrowserName('Firefox');
 
       const header = backend.statusHeader();
@@ -570,7 +569,7 @@ describe('ConnectionManager', () => {
   describe('setStealthMode', () => {
     it('toggles stealth indicator in header', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
 
       backend.setStealthMode(true);
       expect(backend.statusHeader()).toContain('Stealth');
@@ -585,7 +584,7 @@ describe('ConnectionManager', () => {
   describe('serverClosed()', () => {
     it('cleans up and returns to passive', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
 
       await backend.serverClosed();
 
@@ -595,18 +594,18 @@ describe('ConnectionManager', () => {
 
     it('calls serverClosed on bridge', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
 
       await backend.serverClosed();
       expect(mockBridgeInstance.serverClosed).toHaveBeenCalled();
     });
 
-    it('stops ExtensionServer', async () => {
+    it('stops DaemonClient', async () => {
       await backend.initialize(makeMockServer(), {});
-      await backend.callTool('enable', { client_id: 'test' });
+      await backend.callTool('connect', { client_id: 'test' });
 
       await backend.serverClosed();
-      expect(mockExtensionServerInstance.stop).toHaveBeenCalled();
+      expect(mockDaemonClientInstance.stop).toHaveBeenCalled();
     });
 
     it('is safe to call when already passive', async () => {
@@ -619,11 +618,11 @@ describe('ConnectionManager', () => {
   // ---- listTools ----
 
   describe('listTools()', () => {
-    it('includes connection tools (enable, disable, status)', async () => {
+    it('includes connection tools (connect, disconnect, status)', async () => {
       const tools = await backend.listTools();
       const names = tools.map((t: any) => t.name);
-      expect(names).toContain('enable');
-      expect(names).toContain('disable');
+      expect(names).toContain('connect');
+      expect(names).toContain('disconnect');
       expect(names).toContain('status');
     });
 

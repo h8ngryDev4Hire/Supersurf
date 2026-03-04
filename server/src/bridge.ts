@@ -7,7 +7,7 @@
  * Key behaviors:
  *   - Single-connection model: rejects additional browsers while one is connected
  *   - 10s keep-alive pings to detect stale connections
- *   - 30s default timeout on `sendCmd` requests
+ *   - 60s default timeout on `sendCmd` requests
  *   - Handles three message types: responses (correlated by id), handshakes (browser info),
  *     and notifications (tab info updates)
  *   - `onRawConnection` hook for multiplexer to intercept connections before default handling
@@ -228,10 +228,10 @@ export class ExtensionServer implements IExtensionTransport {
    * Send a JSON-RPC 2.0 request to the extension and await the response.
    * @param method - Command name (e.g., 'evaluateScript', 'forwardCDPCommand')
    * @param params - Command parameters
-   * @param timeout - Max wait time in ms (default 30s)
+   * @param timeout - Max wait time in ms (default 60s)
    * @throws If extension is disconnected or request times out
    */
-  async sendCmd(method: string, params: Record<string, unknown> = {}, timeout: number = 30000): Promise<any> {
+  async sendCmd(method: string, params: Record<string, unknown> = {}, timeout: number = 60000): Promise<any> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error('Extension not connected. Open the extension popup and click "Enable".');
     }

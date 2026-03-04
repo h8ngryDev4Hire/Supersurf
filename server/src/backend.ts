@@ -2,9 +2,9 @@
  * ConnectionManager — central state machine for the server's connection lifecycle.
  *
  * States:
- *   - **passive** — server is idle, only connection tools (enable/disable/status) are available
- *   - **active** — WebSocket server is listening, waiting for extension to connect
- *   - **connected** — extension linked, all browser tools available
+ *   - **passive** — server is idle, only connection tools (connect/disconnect/status) are available
+ *   - **active** — connected to daemon, waiting for extension
+ *   - **connected** — extension linked via daemon, all browser tools available
  *
  * This module owns state transitions and tool dispatch. It delegates:
  *   - Tool schemas to `backend/schemas.ts`
@@ -28,7 +28,7 @@ import type { BackendConfig, TabInfo, BackendState, ToolSchema, ConnectionManage
 
 import { buildStatusHeader } from './backend/status';
 import { getConnectionToolSchemas, getDebugToolSchema } from './backend/schemas';
-import { onEnable, onDisable, onStatus, onExperimentalFeatures, onReloadMCP } from './backend/handlers';
+import { onConnect, onDisconnect, onStatus, onExperimentalFeatures, onReloadMCP } from './backend/handlers';
 
 const log = createLog('[Conn]');
 
@@ -125,10 +125,10 @@ export class ConnectionManager implements ConnectionManagerAPI {
     log(`callTool(${name}) — state: ${this.state}`);
 
     switch (name) {
-      case 'enable':
-        return await onEnable(this, rawArguments, options);
-      case 'disable':
-        return await onDisable(this, options);
+      case 'connect':
+        return await onConnect(this, rawArguments, options);
+      case 'disconnect':
+        return await onDisconnect(this, options);
       case 'status':
         return await onStatus(this, options);
       case 'experimental_features':
@@ -143,14 +143,14 @@ export class ConnectionManager implements ConnectionManagerAPI {
         return {
           success: false,
           error: 'not_enabled',
-          message: 'Browser automation not active. Call enable first.',
+          message: 'Browser automation not active. Call connect first.',
         };
       }
       return {
         content: [
           {
             type: 'text',
-            text: `### ⚠️ Browser Automation Not Active\n\n**Current State:** Passive (disabled)\n\n**You must call \`enable\` first to activate browser automation.** After calling \`enable\`, the extension auto-connects within a few seconds — then retry your tool call.`,
+            text: `### Browser Automation Not Active\n\n**Current State:** Passive (disconnected)\n\n**You must call \`connect\` first to activate browser automation.** The daemon auto-starts and the extension connects within seconds — then retry your tool call.`,
           },
         ],
         isError: true,

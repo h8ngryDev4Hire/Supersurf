@@ -1,0 +1,239 @@
+/**
+ * RequestScheduler — round-robin scheduler with tab ownership enforcement.
+ *
+ * Extracted from the multiplexer's leader-mode logic. Serializes all commands
+ * to the extension through a single drain loop, ensuring fair round-robin
+ * across sessions and automatic tab context-switching.
+ *
+ * @module scheduler
+ */
+
+import type { FileLogger } from 'shared';
+import type { ExtensionBridge } from './extension-bridge';
+import type { SessionRegistry } from './session';
+import type { QueuedRequest } from './types';
+
+const debugLog = (...args: unknown[]) => {
+  const logger = (global as any).DAEMON_LOGGER as FileLogger | undefined;
+  if (logger) logger.log('[Sched]', ...args);
+  else if ((global as any).DAEMON_DEBUG) console.error('[Sched]', ...args);
+};
+
+// Methods that modify tab ownership
+const TAB_CLAIM_METHODS = new Set(['selectTab', 'createTab']);
+const TAB_RELEASE_METHODS = new Set(['closeTab']);
+
+// Methods where we need to ensure the correct tab is active before executing
+const TAB_SCOPED_METHODS = new Set([
+  'navigate', 'snapshot', 'evaluate', 'screenshot',
+  'consoleMessages', 'networkRequests', 'clearNetwork',
+  'performanceMetrics', 'waitForReady', 'capturePageState',
+  'forwardCDPCommand', 'window', 'dialog',
+  'listExtensions', 'reloadExtension', 'secure_fill',
+]);
+
+/**
+ * Round-robin request scheduler with tab ownership and auto context-switching.
+ */
+export class RequestScheduler {
+  private requestQueue: Map<string, QueuedRequest[]> = new Map();
+  private sessionOrder: string[] = [];
+  private currentSessionIdx: number = 0;
+  private processingQueue: boolean = false;
+  private currentExtensionTabId: number | null = null;
+  private sessionGroupIds: Map<string, number> = new Map();
+
+  constructor(
+    private bridge: ExtensionBridge,
+    private sessions: SessionRegistry,
+  ) {}
+
+  /** Register a session in the scheduler. */
+  addSession(sessionId: string): void {
+    this.requestQueue.set(sessionId, []);
+    this.sessionOrder.push(sessionId);
+  }
+
+  /** Remove a session from the scheduler. Rejects queued requests. */
+  removeSession(sessionId: string): void {
+    const queued = this.requestQueue.get(sessionId) || [];
+    for (const req of queued) {
+      req.reject(new Error('Session disconnected'));
+    }
+    this.requestQueue.delete(sessionId);
+    this.sessionOrder = this.sessionOrder.filter(s => s !== sessionId);
+    this.sessionGroupIds.delete(sessionId);
+    if (this.currentSessionIdx >= this.sessionOrder.length) {
+      this.currentSessionIdx = 0;
+    }
+  }
+
+  /** Enqueue a request and return a promise for the result. */
+  enqueue(sessionId: string, method: string, params: Record<string, unknown>, timeout: number = 30000): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const queue = this.requestQueue.get(sessionId);
+      if (!queue) {
+        reject(new Error('Unknown session'));
+        return;
+      }
+
+      queue.push({ sessionId, method, params, timeout, resolve, reject });
+      this.drainQueue();
+    });
+  }
+
+  /** Process queued requests in round-robin order. Serialized — one at a time. */
+  private async drainQueue(): Promise<void> {
+    if (this.processingQueue) return;
+    this.processingQueue = true;
+
+    try {
+      while (this.hasQueuedRequests()) {
+        const request = this.pickNextRequest();
+        if (!request) break;
+        await this.executeRequest(request);
+      }
+    } finally {
+      this.processingQueue = false;
+    }
+  }
+
+  private hasQueuedRequests(): boolean {
+    for (const queue of this.requestQueue.values()) {
+      if (queue.length > 0) return true;
+    }
+    return false;
+  }
+
+  /** Round-robin pick: advance through sessions, skip empty queues. */
+  private pickNextRequest(): QueuedRequest | null {
+    if (this.sessionOrder.length === 0) return null;
+
+    let checked = 0;
+    while (checked < this.sessionOrder.length) {
+      const sessionId = this.sessionOrder[this.currentSessionIdx];
+      const queue = this.requestQueue.get(sessionId);
+
+      this.currentSessionIdx = (this.currentSessionIdx + 1) % this.sessionOrder.length;
+      checked++;
+
+      if (queue && queue.length > 0) {
+        return queue.shift()!;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Execute a single queued request:
+   * 1. Tab ownership check for tab-management methods
+   * 2. Auto context-switch if this session's tab != current extension tab
+   * 3. Inject _sessionId for extension-side group isolation
+   * 4. Execute the actual command
+   * 5. Track ownership changes
+   */
+  private async executeRequest(request: QueuedRequest): Promise<void> {
+    const { sessionId, method, params, timeout, resolve, reject } = request;
+
+    try {
+      // Tab ownership enforcement
+      if (TAB_CLAIM_METHODS.has(method)) {
+        if (method === 'selectTab') {
+          const tabId = params.tabId as number | undefined;
+          if (tabId !== undefined) {
+            const owner = this.sessions.findTabOwner(tabId);
+            if (owner && owner !== sessionId) {
+              reject(new Error(`Tab ${tabId} is owned by session "${owner}". Cannot attach.`));
+              return;
+            }
+          }
+        }
+      }
+
+      if (TAB_RELEASE_METHODS.has(method)) {
+        const tabId = params.tabId as number | undefined;
+        if (tabId !== undefined) {
+          const owner = this.sessions.findTabOwner(tabId);
+          if (owner && owner !== sessionId) {
+            reject(new Error(`Tab ${tabId} is owned by session "${owner}". Cannot close.`));
+            return;
+          }
+        }
+      }
+
+      // Auto context-switch
+      if (TAB_SCOPED_METHODS.has(method) || (!TAB_CLAIM_METHODS.has(method) && !TAB_RELEASE_METHODS.has(method) && method !== 'getTabs')) {
+        const sessionTabId = this.sessions.getAttachedTabId(sessionId);
+        if (sessionTabId !== null && sessionTabId !== this.currentExtensionTabId) {
+          debugLog(`Context-switch: tab ${this.currentExtensionTabId} -> ${sessionTabId} (session="${sessionId}")`);
+          try {
+            await this.bridge.sendCmd('selectTab', { tabId: sessionTabId, _sessionId: sessionId }, 5000);
+            this.currentExtensionTabId = sessionTabId;
+          } catch (err: any) {
+            debugLog(`Context-switch failed: ${err.message}`);
+          }
+        }
+      }
+
+      // Inject _sessionId for extension-side group isolation
+      const enrichedParams = { ...params, _sessionId: sessionId };
+
+      // Execute the actual command
+      const result = await this.bridge.sendCmd(method, enrichedParams, timeout);
+
+      // Track ownership changes
+      if (method === 'createTab' || method === 'selectTab') {
+        const tabId = result?.attachedTab?.id ?? result?.id;
+        const groupId = result?.attachedTab?.groupId;
+        if (tabId) {
+          this.sessions.addOwnedTab(sessionId, tabId);
+          this.sessions.setAttachedTabId(sessionId, tabId);
+          this.currentExtensionTabId = tabId;
+        }
+        if (groupId !== undefined && groupId !== -1) {
+          this.sessionGroupIds.set(sessionId, groupId);
+          this.sessions.setGroupId(sessionId, groupId);
+        }
+      }
+
+      if (method === 'closeTab') {
+        const sessionTabId = this.sessions.getAttachedTabId(sessionId);
+        if (sessionTabId !== null) {
+          this.sessions.removeOwnedTab(sessionId, sessionTabId);
+          this.sessions.setAttachedTabId(sessionId, null);
+        }
+      }
+
+      // Filter getTabs results
+      if (method === 'getTabs') {
+        const tabsResult = result?.tabs ?? result;
+        if (Array.isArray(tabsResult)) {
+          const otherOwnedIds = this.sessions.getOtherOwnedTabIds(sessionId);
+          const filtered = tabsResult.filter((tab: any) => !otherOwnedIds.has(tab.id));
+          if (result?.tabs) {
+            resolve({ ...result, tabs: filtered });
+          } else {
+            resolve(filtered);
+          }
+          return;
+        }
+      }
+
+      resolve(result);
+    } catch (error: any) {
+      reject(error);
+    }
+  }
+
+  /** Drain and reject all queued requests. Called during shutdown. */
+  drainAll(): void {
+    for (const [, queue] of this.requestQueue) {
+      for (const req of queue) {
+        req.reject(new Error('Daemon shutting down'));
+      }
+    }
+    this.requestQueue.clear();
+    this.sessionOrder = [];
+  }
+}

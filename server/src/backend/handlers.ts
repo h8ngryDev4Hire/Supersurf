@@ -1,22 +1,23 @@
 /**
- * Connection-level tool handlers — enable, disable, status, experimental features, reload.
+ * Connection-level tool handlers — connect, disconnect, status, experimental features, reload.
  *
  * Each handler receives the ConnectionManagerAPI (mutable state), the tool arguments,
  * and an options object. Handlers return either MCP content responses (for MCP mode)
  * or raw JSON objects (for script mode via `rawResult: true`).
  *
  * State transitions managed here:
- *   - `onEnable`:  passive -> active (starts WebSocket, creates BrowserBridge)
- *   - `onDisable`: active/connected -> passive (tears down everything)
+ *   - `onConnect`:  passive -> active (spawns daemon, connects via DaemonClient, creates BrowserBridge)
+ *   - `onDisconnect`: active/connected -> passive (closes daemon session)
  *   - `onReloadMCP`: triggers exit code 42 for the debug wrapper to restart
  *
  * @module backend/handlers
  */
 
 import type { ConnectionManagerAPI } from './types';
-import { ExtensionServer } from '../bridge';
+import { DaemonClient } from '../daemon-client';
+import { ensureDaemon, getSockPath } from '../daemon-spawn';
 import { createLog, getRegistry } from '../logger';
-import { experimentRegistry, isInfraExperimentEnabled, applyInitialState } from '../experimental/index';
+import { experimentRegistry, applyInitialState } from '../experimental/index';
 import { initSession as initHumanization, destroySession as destroyHumanization } from '../experimental/mouse-humanization/index';
 
 const log = createLog('[Conn]');
@@ -32,14 +33,14 @@ async function getBrowserBridge(): Promise<any> {
   return BrowserBridge;
 }
 
-// ─── Enable ──────────────────────────────────────────────────
+// ─── Connect ──────────────────────────────────────────────────
 
 /**
- * Activate browser automation: validate client_id, start WebSocket server,
- * create BrowserBridge, apply pre-enabled experiments from env.
+ * Connect to the SuperSurf daemon: validate client_id, spawn daemon if needed,
+ * connect via DaemonClient, create BrowserBridge, apply pre-enabled experiments.
  * Transitions state from passive to active.
  */
-export async function onEnable(
+export async function onConnect(
   mgr: ConnectionManagerAPI,
   args: Record<string, unknown> = {},
   options: { rawResult?: boolean } = {}
@@ -56,7 +57,7 @@ export async function onEnable(
       content: [
         {
           type: 'text',
-          text: `### ⚠️ Missing Required Parameter\n\n\`client_id\` is required.\n\n**Example:**\n\`\`\`\nenable client_id='my-project'\n\`\`\``,
+          text: `### Missing Required Parameter\n\n\`client_id\` is required.\n\n**Example:**\n\`\`\`\nconnect client_id='my-project'\n\`\`\``,
         },
       ],
       isError: true,
@@ -67,7 +68,7 @@ export async function onEnable(
     if (options.rawResult) {
       return {
         success: true,
-        already_enabled: true,
+        already_connected: true,
         state: mgr.state,
         browser: mgr.connectedBrowserName,
         client_id: mgr.clientId,
@@ -79,7 +80,7 @@ export async function onEnable(
           type: 'text',
           text:
             mgr.statusHeader() +
-            `### ✅ Already Enabled\n\n**State:** ${mgr.state}\n**Client ID:** ${mgr.clientId}\n\nTo restart, call \`disable\` first.`,
+            `### Already Connected\n\n**State:** ${mgr.state}\n**Client ID:** ${mgr.clientId}\n\nTo restart, call \`disconnect\` first.`,
         },
       ],
     };
@@ -96,28 +97,22 @@ export async function onEnable(
   }
 
   try {
-    log('Starting extension server...');
-
     const port = mgr.config.port || 5555;
-    if (isInfraExperimentEnabled('multiplexer', mgr.config)) {
-      const { Multiplexer } = await import('../experimental/multiplexer');
-      mgr.extensionServer = new Multiplexer(port, '127.0.0.1', mgr.clientId!);
-    } else {
-      mgr.extensionServer = new ExtensionServer(port, '127.0.0.1');
-    }
-    await mgr.extensionServer.start();
 
-    if (mgr.clientId) {
-      mgr.extensionServer.notifyClientId(mgr.clientId);
-    }
+    // Spawn daemon if not running
+    log('Ensuring daemon is running...');
+    await ensureDaemon(port, mgr.debugMode);
+
+    // Connect to daemon via Unix socket
+    const sockPath = getSockPath();
+    const client = new DaemonClient(sockPath, mgr.clientId!);
+    await client.start();
+    mgr.extensionServer = client;
 
     // Handle extension reconnections
     mgr.extensionServer.onReconnect = () => {
       log('Extension reconnected, resetting tab state...');
       mgr.attachedTab = null;
-      if (mgr.clientId) {
-        mgr.extensionServer!.notifyClientId(mgr.clientId);
-      }
     };
 
     // Monitor tab info updates
@@ -144,7 +139,7 @@ export async function onEnable(
     await mgr.bridge.initialize(mgr.server, mgr.clientInfo, mgr);
 
     mgr.state = 'active';
-    mgr.connectedBrowserName = 'Local Browser';
+    mgr.connectedBrowserName = client.browser;
 
     // Pre-enable session features from env var
     applyInitialState(mgr.config);
@@ -168,7 +163,7 @@ export async function onEnable(
         state: mgr.state,
         browser: mgr.connectedBrowserName,
         client_id: mgr.clientId,
-        port: mgr.config.port || 5555,
+        port,
       };
     }
 
@@ -178,18 +173,17 @@ export async function onEnable(
           type: 'text',
           text:
             mgr.statusHeader() +
-            `### ✅ Browser Automation Activated!\n\n` +
-            `**State:** Active (waiting for extension)\n` +
-            `**Port:** ${port}\n\n` +
+            `### Connected to SuperSurf Daemon\n\n` +
+            `**State:** Active\n` +
+            `**Browser:** ${mgr.connectedBrowserName}\n\n` +
             `**Next Steps:**\n` +
-            `1. Open the SuperSurf extension popup and enable it\n` +
-            `2. Call \`browser_tabs action='list'\` to see tabs\n` +
-            `3. Call \`browser_tabs action='attach' index=N\` to attach`,
+            `1. Call \`browser_tabs action='list'\` to see tabs\n` +
+            `2. Call \`browser_tabs action='attach' index=N\` to attach`,
         },
       ],
     };
   } catch (error: any) {
-    log('Failed to start:', error);
+    log('Failed to connect:', error);
     mgr.bridge = null;
     if (mgr.extensionServer) {
       await mgr.extensionServer.stop().catch(() => {});
@@ -197,41 +191,35 @@ export async function onEnable(
     }
     mgr.state = 'passive';
 
-    const port = mgr.config.port || 5555;
-    const isPortError =
-      error.message &&
-      (error.message.includes('EADDRINUSE') || error.message.includes('address already in use'));
-
     if (options.rawResult) {
       return {
         success: false,
-        error: isPortError ? 'port_in_use' : 'connection_failed',
+        error: 'connection_failed',
         message: error.message,
-        port,
       };
     }
 
-    const errorMsg = isPortError
-      ? `Port ${port} already in use. Disable MCP in other project or use --port <number>.`
-      : `### Connection Failed\n\n${error.message}`;
-
-    return { content: [{ type: 'text', text: errorMsg }], isError: true };
+    return {
+      content: [{ type: 'text', text: `### Connection Failed\n\n${error.message}` }],
+      isError: true,
+    };
   }
 }
 
-// ─── Disable ─────────────────────────────────────────────────
+// ─── Disconnect ─────────────────────────────────────────────────
 
 /**
- * Deactivate browser automation: tear down bridge, stop WebSocket, reset
- * experiments and mouse humanization, transition back to passive.
+ * Disconnect from the daemon: tear down bridge, close DaemonClient session,
+ * reset experiments and mouse humanization, transition back to passive.
+ * The daemon stays alive for other sessions.
  */
-export async function onDisable(
+export async function onDisconnect(
   mgr: ConnectionManagerAPI,
   options: { rawResult?: boolean } = {}
 ): Promise<any> {
   if (mgr.state === 'passive') {
     if (options.rawResult) {
-      return { success: true, already_disabled: true, state: 'passive' };
+      return { success: true, already_disconnected: true, state: 'passive' };
     }
     return {
       content: [
@@ -239,7 +227,7 @@ export async function onDisable(
           type: 'text',
           text:
             mgr.statusHeader() +
-            `### Already Disabled\n\nCall \`enable\` to activate.`,
+            `### Already Disconnected\n\nCall \`connect\` to activate.`,
         },
       ],
     };
@@ -282,7 +270,7 @@ export async function onDisable(
         type: 'text',
         text:
           mgr.statusHeader() +
-          `### ✅ Disabled\n\nBrowser automation deactivated. Call \`enable\` to reactivate.`,
+          `### Disconnected\n\nSession closed. Daemon stays alive for other sessions. Call \`connect\` to reconnect.`,
       },
     ],
   };
@@ -290,20 +278,11 @@ export async function onDisable(
 
 // ─── Status ──────────────────────────────────────────────────
 
-/** Return current connection state, browser info, attached tab details, and multiplexer status (if enabled). */
+/** Return current connection state, browser info, and attached tab details. */
 export async function onStatus(
   mgr: ConnectionManagerAPI,
   options: { rawResult?: boolean } = {}
 ): Promise<any> {
-  // Build multiplexer status if experiment is enabled
-  let muxStatus: { role: string | null; session: string; peers: number; sessions: string[] } | null = null;
-  if (isInfraExperimentEnabled('multiplexer', mgr.config) && mgr.extensionServer) {
-    const { Multiplexer } = await import('../experimental/multiplexer');
-    if (mgr.extensionServer instanceof Multiplexer) {
-      muxStatus = mgr.extensionServer.getStatus();
-    }
-  }
-
   const statusData: Record<string, unknown> = {
     state: mgr.state,
     browser: mgr.connectedBrowserName,
@@ -317,10 +296,6 @@ export async function onStatus(
       : null,
   };
 
-  if (muxStatus) {
-    statusData.multiplexer = muxStatus;
-  }
-
   if (options.rawResult) {
     return statusData;
   }
@@ -332,13 +307,13 @@ export async function onStatus(
           type: 'text',
           text:
             mgr.statusHeader() +
-            `### ❌ Disabled\n\nBrowser automation is not active. Call \`enable\` to activate.`,
+            `### Disconnected\n\nBrowser automation is not active. Call \`connect\` to activate.`,
         },
       ],
     };
   }
 
-  let statusText = `### ✅ Enabled\n\n`;
+  let statusText = `### Connected\n\n`;
   if (mgr.connectedBrowserName) {
     statusText += `**Browser:** ${mgr.connectedBrowserName}\n`;
   }
@@ -346,17 +321,9 @@ export async function onStatus(
   if (mgr.attachedTab) {
     statusText += `**Tab:** #${mgr.attachedTab.index} — ${mgr.attachedTab.title || 'Untitled'}\n`;
     statusText += `**URL:** ${mgr.attachedTab.url || 'N/A'}\n\n`;
-    statusText += `✅ Ready for automation!`;
+    statusText += `Ready for automation!`;
   } else {
-    statusText += `\n⚠️ No tab attached. Use \`browser_tabs action='attach' index=N\`.`;
-  }
-
-  if (muxStatus) {
-    const roleLabel = muxStatus.role === 'leader' ? 'Leader' : 'Follower';
-    statusText += `\n\n**Multiplexer:** ${roleLabel} (session: \`${muxStatus.session}\`)`;
-    if (muxStatus.role === 'leader' && muxStatus.peers > 0) {
-      statusText += ` | ${muxStatus.peers} peer(s)`;
-    }
+    statusText += `\nNo tab attached. Use \`browser_tabs action='attach' index=N\`.`;
   }
 
   return {
@@ -451,6 +418,6 @@ export function onReloadMCP(
 
   setTimeout(() => process.exit(42), 100);
   return {
-    content: [{ type: 'text', text: '🔄 Reloading MCP server...' }],
+    content: [{ type: 'text', text: 'Reloading MCP server...' }],
   };
 }

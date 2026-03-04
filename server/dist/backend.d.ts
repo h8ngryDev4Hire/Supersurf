@@ -2,9 +2,9 @@
  * ConnectionManager — central state machine for the server's connection lifecycle.
  *
  * States:
- *   - **passive** — server is idle, only connection tools (enable/disable/status) are available
- *   - **active** — WebSocket server is listening, waiting for extension to connect
- *   - **connected** — extension linked, all browser tools available
+ *   - **passive** — server is idle, only connection tools (connect/disconnect/status) are available
+ *   - **active** — connected to daemon, waiting for extension
+ *   - **connected** — extension linked via daemon, all browser tools available
  *
  * This module owns state transitions and tool dispatch. It delegates:
  *   - Tool schemas to `backend/schemas.ts`

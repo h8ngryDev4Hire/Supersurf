@@ -240,10 +240,10 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
      * @param tabId - Target tab ID
      * @param method - CDP method name (e.g., 'Page.captureScreenshot', 'Runtime.evaluate')
      * @param params - CDP method parameters
-     * @param timeout - Max wait in ms before rejecting (default 25s)
+     * @param timeout - Max wait in ms before rejecting (default 50s)
      * @returns CDP command result
      */
-    async function cdp(tabId, method, params = {}, timeout = 25000) {
+    async function cdp(tabId, method, params = {}, timeout = 50000) {
         await ensureDebugger(tabId);
         return await Promise.race([
             chromeDebugger.sendCommand({ tabId }, method, params),

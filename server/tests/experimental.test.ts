@@ -3,7 +3,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 // Import directly — no mocks needed for pure logic modules
 import {
   experimentRegistry,
-  isInfraExperimentEnabled,
   applyInitialState,
   diffSnapshots,
   calculateConfidence,
@@ -82,22 +81,6 @@ describe('ExperimentRegistry', () => {
   });
 });
 
-// ── isInfraExperimentEnabled ────────────────────────────────────
-
-describe('isInfraExperimentEnabled()', () => {
-  it('returns false when no enabledExperiments config', () => {
-    expect(isInfraExperimentEnabled('multiplexer', {})).toBe(false);
-  });
-
-  it('returns true when feature is in the list', () => {
-    expect(isInfraExperimentEnabled('multiplexer', { enabledExperiments: ['multiplexer'] })).toBe(true);
-  });
-
-  it('returns false when feature is not in the list', () => {
-    expect(isInfraExperimentEnabled('multiplexer', { enabledExperiments: ['other'] })).toBe(false);
-  });
-});
-
 // ── applyInitialState ───────────────────────────────────────────
 
 describe('applyInitialState()', () => {
@@ -111,10 +94,10 @@ describe('applyInitialState()', () => {
     expect(experimentRegistry.isEnabled('smart_waiting')).toBe(true);
   });
 
-  it('silently skips infra experiments not in AVAILABLE_EXPERIMENTS', () => {
-    applyInitialState({ enabledExperiments: ['multiplexer', 'page_diffing'] });
+  it('silently skips unknown experiment names not in AVAILABLE_EXPERIMENTS', () => {
+    applyInitialState({ enabledExperiments: ['unknown_feature', 'page_diffing'] });
     expect(experimentRegistry.isEnabled('page_diffing')).toBe(true);
-    // multiplexer doesn't throw — just skipped
+    // unknown_feature doesn't throw — just skipped
   });
 
   it('does nothing when no config', () => {

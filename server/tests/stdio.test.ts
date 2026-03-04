@@ -11,18 +11,25 @@ vi.mock('../src/logger', () => ({
   createLog: () => (..._args: unknown[]) => {},
 }));
 
-// Mock ExtensionServer (bridge)
-vi.mock('../src/bridge', () => ({
-  ExtensionServer: vi.fn(() => ({
+// Mock DaemonClient (replaces ExtensionServer)
+vi.mock('../src/daemon-client', () => ({
+  DaemonClient: vi.fn(() => ({
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     notifyClientId: vi.fn(),
-    connected: false,
+    sendCmd: vi.fn().mockResolvedValue(undefined),
+    connected: true,
     buildTime: null,
     browser: 'chrome',
     onReconnect: null,
     onTabInfoUpdate: null,
   })),
+}));
+
+// Mock daemon-spawn
+vi.mock('../src/daemon-spawn', () => ({
+  ensureDaemon: vi.fn().mockResolvedValue(undefined),
+  getSockPath: vi.fn().mockReturnValue('/tmp/test-daemon.sock'),
 }));
 
 // Mock experimental registry
@@ -34,7 +41,6 @@ vi.mock('../src/experimental/index', () => ({
     reset: vi.fn(),
     getStates: vi.fn().mockReturnValue({ page_diffing: false, smart_waiting: false }),
   },
-  isInfraExperimentEnabled: vi.fn().mockReturnValue(false),
   applyInitialState: vi.fn(),
 }));
 

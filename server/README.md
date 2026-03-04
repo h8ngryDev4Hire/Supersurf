@@ -31,13 +31,13 @@ Claude Desktop — add to your MCP config:
 
 **3. Use it**
 
-Your agent calls `enable` to start the session, the extension auto-connects, and 30+ browser tools become available.
+Your agent calls `connect` to start the session, a daemon auto-starts, the extension connects, and 30+ browser tools become available.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `enable` / `disable` / `status` | Session lifecycle |
+| `connect` / `disconnect` / `status` | Session lifecycle |
 | `browser_tabs` | List, create, attach, or close tabs |
 | `browser_navigate` | Go to URL, back, forward, reload |
 | `browser_interact` | Click, type, press keys, hover, scroll, wait, select, upload files |
@@ -83,10 +83,10 @@ Pass flags via your MCP config:
 ## How It Works
 
 ```
-AI Agent  -->  MCP Server (stdio)  -->  WebSocket  -->  Chrome Extension  -->  Browser
+AI Agent  -->  MCP Server (stdio)  -->  Daemon (Unix socket)  -->  WebSocket  -->  Chrome Extension  -->  Browser
 ```
 
-All DOM interaction goes through Chrome content scripts (isolated world, invisible to page JS). CDP is only used for screenshots, network interception, and PDF export. Your agent browses with your real browser profile — cookies, history, localStorage, extensions.
+A standalone daemon multiplexes multiple MCP sessions through a single Chrome extension connection. All DOM interaction goes through Chrome content scripts (isolated world, invisible to page JS). CDP is only used for screenshots, network interception, and PDF export. Your agent browses with your real browser profile — cookies, history, localStorage, extensions.
 
 ## Requirements
 
@@ -98,4 +98,8 @@ All DOM interaction goes through Chrome content scripts (isolated world, invisib
 
 Apache-2.0 with Commons Clause — free to use, modify, and redistribute, but not to sell. 100% open source.
 
-[Full documentation](https://github.com/h8ngryDev4Hire/Supersurf)
+[Full documentation](https://github.com/liquidbuiltit/Supersurf)
+
+---
+
+If SuperSurf is useful to you, consider giving us a star on [GitHub](https://github.com/liquidbuiltit/Supersurf) — it helps others discover the project.

@@ -1,34 +1,35 @@
 /**
- * Connection-level tool handlers — enable, disable, status, experimental features, reload.
+ * Connection-level tool handlers — connect, disconnect, status, experimental features, reload.
  *
  * Each handler receives the ConnectionManagerAPI (mutable state), the tool arguments,
  * and an options object. Handlers return either MCP content responses (for MCP mode)
  * or raw JSON objects (for script mode via `rawResult: true`).
  *
  * State transitions managed here:
- *   - `onEnable`:  passive -> active (starts WebSocket, creates BrowserBridge)
- *   - `onDisable`: active/connected -> passive (tears down everything)
+ *   - `onConnect`:  passive -> active (spawns daemon, connects via DaemonClient, creates BrowserBridge)
+ *   - `onDisconnect`: active/connected -> passive (closes daemon session)
  *   - `onReloadMCP`: triggers exit code 42 for the debug wrapper to restart
  *
  * @module backend/handlers
  */
 import type { ConnectionManagerAPI } from './types';
 /**
- * Activate browser automation: validate client_id, start WebSocket server,
- * create BrowserBridge, apply pre-enabled experiments from env.
+ * Connect to the SuperSurf daemon: validate client_id, spawn daemon if needed,
+ * connect via DaemonClient, create BrowserBridge, apply pre-enabled experiments.
  * Transitions state from passive to active.
  */
-export declare function onEnable(mgr: ConnectionManagerAPI, args?: Record<string, unknown>, options?: {
+export declare function onConnect(mgr: ConnectionManagerAPI, args?: Record<string, unknown>, options?: {
     rawResult?: boolean;
 }): Promise<any>;
 /**
- * Deactivate browser automation: tear down bridge, stop WebSocket, reset
- * experiments and mouse humanization, transition back to passive.
+ * Disconnect from the daemon: tear down bridge, close DaemonClient session,
+ * reset experiments and mouse humanization, transition back to passive.
+ * The daemon stays alive for other sessions.
  */
-export declare function onDisable(mgr: ConnectionManagerAPI, options?: {
+export declare function onDisconnect(mgr: ConnectionManagerAPI, options?: {
     rawResult?: boolean;
 }): Promise<any>;
-/** Return current connection state, browser info, attached tab details, and multiplexer status (if enabled). */
+/** Return current connection state, browser info, and attached tab details. */
 export declare function onStatus(mgr: ConnectionManagerAPI, options?: {
     rawResult?: boolean;
 }): Promise<any>;
