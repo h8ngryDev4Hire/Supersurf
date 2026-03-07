@@ -151,12 +151,14 @@ async function onConnect(mgr, args = {}, options = {}) {
                 };
             }
         };
+        // Bind experiment registry to daemon transport
+        index_1.experimentRegistry.bind(client);
         const BB = await getBrowserBridge();
         mgr.bridge = new BB(mgr.config, mgr.extensionServer);
         await mgr.bridge.initialize(mgr.server, mgr.clientInfo, mgr);
         mgr.state = 'active';
         mgr.connectedBrowserName = client.browser;
-        // Pre-enable session features from env var
+        // Pre-enable session features from env var (fire-and-forget IPC to daemon)
         (0, index_1.applyInitialState)(mgr.config);
         // Notify MCP client that tool list changed
         mgr.notifyToolsListChanged().catch((err) => log('Error sending notification:', err));
@@ -246,7 +248,7 @@ async function onDisconnect(mgr, options = {}) {
     mgr.connectedBrowserName = null;
     mgr.attachedTab = null;
     (0, index_2.destroySession)('_default');
-    index_1.experimentRegistry.reset();
+    index_1.experimentRegistry.unbind();
     mgr.notifyToolsListChanged().catch((err) => log('Error sending notification:', err));
     if (options.rawResult) {
         return { success: true, state: 'passive' };
@@ -331,21 +333,20 @@ async function onExperimentalFeatures(mgr, args = {}, options = {}) {
     }
     for (const key of keys) {
         const value = args[key];
-        if (value === true) {
-            index_1.experimentRegistry.enable(key);
+        if (typeof value === 'boolean') {
+            await index_1.experimentRegistry.toggle(key, value);
             if (key === 'mouse_humanization') {
-                (0, index_2.initSession)('_default');
-                if (mgr.extensionServer) {
-                    mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: true }).catch(() => { });
+                if (value) {
+                    (0, index_2.initSession)('_default');
+                    if (mgr.extensionServer) {
+                        mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: true }).catch(() => { });
+                    }
                 }
-            }
-        }
-        else if (value === false) {
-            index_1.experimentRegistry.disable(key);
-            if (key === 'mouse_humanization') {
-                (0, index_2.destroySession)('_default');
-                if (mgr.extensionServer) {
-                    mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: false }).catch(() => { });
+                else {
+                    (0, index_2.destroySession)('_default');
+                    if (mgr.extensionServer) {
+                        mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: false }).catch(() => { });
+                    }
                 }
             }
         }

@@ -13,8 +13,14 @@
 import type { ExtensionBridge } from './extension-bridge';
 import type { SessionRegistry } from './session';
 import type { RequestScheduler } from './scheduler';
+import type { DaemonExperimentRegistry } from './experiments/index';
 /** Callback invoked when the number of sessions changes (for idle timeout management). */
 export type SessionCountCallback = (count: number) => void;
+/** Metadata passed from main to IPCServer for status queries. */
+export interface IPCServerMeta {
+    port: number;
+    version: string;
+}
 /**
  * Unix domain socket server for MCP session connections.
  * Handles session handshake, NDJSON message routing, and cleanup.
@@ -25,16 +31,23 @@ export declare class IPCServer {
     private bridge;
     private sessions;
     private scheduler;
+    private experiments;
     private onSessionCountChange;
-    constructor(socketPath: string, bridge: ExtensionBridge, sessions: SessionRegistry, scheduler: RequestScheduler);
+    private startedAt;
+    private meta;
+    constructor(socketPath: string, bridge: ExtensionBridge, sessions: SessionRegistry, scheduler: RequestScheduler, experiments: DaemonExperimentRegistry, meta?: IPCServerMeta);
     /** Set a callback for session count changes (used by idle timeout). */
     setSessionCountCallback(cb: SessionCountCallback): void;
     /** Start listening on the Unix socket. */
     start(): Promise<void>;
     /** Handle a new connection from an MCP server. */
     private handleConnection;
-    /** Route a JSON-RPC 2.0 request into the scheduler. */
+    /** Route a JSON-RPC 2.0 request — experiment methods are handled directly, everything else goes to the scheduler. */
     private handleRequest;
+    /** Handle an experiment IPC request directly (no scheduler round-trip). */
+    private handleExperimentRequest;
+    /** Build a status response from live daemon state. */
+    private buildStatusResponse;
     /** Write an NDJSON line to a socket. */
     private sendLine;
     /** Gracefully shut down the IPC server. */

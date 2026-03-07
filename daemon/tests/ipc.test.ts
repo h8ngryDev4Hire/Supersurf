@@ -6,6 +6,7 @@ import path from 'path';
 import { IPCServer } from '../src/ipc';
 import { SessionRegistry } from '../src/session';
 import { RequestScheduler } from '../src/scheduler';
+import { DaemonExperimentRegistry } from '../src/experiments/index';
 import type { ExtensionBridge } from '../src/extension-bridge';
 
 function mockBridge(): ExtensionBridge {
@@ -53,6 +54,7 @@ describe('IPCServer', () => {
   let bridge: ExtensionBridge;
   let sessions: SessionRegistry;
   let scheduler: RequestScheduler;
+  let experiments: DaemonExperimentRegistry;
   let ipc: IPCServer;
   let sockPath: string;
 
@@ -66,7 +68,8 @@ describe('IPCServer', () => {
     bridge = mockBridge();
     sessions = new SessionRegistry();
     scheduler = new RequestScheduler(bridge, sessions);
-    ipc = new IPCServer(sockPath, bridge, sessions, scheduler);
+    experiments = new DaemonExperimentRegistry();
+    ipc = new IPCServer(sockPath, bridge, sessions, scheduler, experiments);
   });
 
   afterEach(async () => {
@@ -195,6 +198,205 @@ describe('IPCServer', () => {
     expect(sessions.count).toBe(2);
     expect(sessions.has('session-a')).toBe(true);
     expect(sessions.has('session-b')).toBe(true);
+
+    client1.end();
+    client2.end();
+  });
+
+  // ── Experiment IPC ──────────────────────────────────────────
+
+  it('handles experiments.toggle without going through scheduler', async () => {
+    await ipc.start();
+    const client = await connectToSocket(sockPath);
+
+    writeLine(client, { type: 'session_register', sessionId: 'exp-test' });
+    await readLine(client);
+
+    writeLine(client, {
+      jsonrpc: '2.0',
+      id: 'exp-1',
+      method: 'experiments.toggle',
+      params: { experiment: 'page_diffing', enabled: true },
+    });
+
+    const response = await readLine(client);
+    expect(response.jsonrpc).toBe('2.0');
+    expect(response.id).toBe('exp-1');
+    expect(response.result.success).toBe(true);
+    expect(response.result.experiment).toBe('page_diffing');
+    expect(response.result.enabled).toBe(true);
+
+    // Verify state was stored
+    expect(experiments.isEnabled('exp-test', 'page_diffing')).toBe(true);
+
+    client.end();
+  });
+
+  it('handles experiments.get', async () => {
+    await ipc.start();
+    const client = await connectToSocket(sockPath);
+
+    writeLine(client, { type: 'session_register', sessionId: 'exp-get' });
+    await readLine(client);
+
+    // Enable one experiment first
+    writeLine(client, {
+      jsonrpc: '2.0',
+      id: 'toggle-1',
+      method: 'experiments.toggle',
+      params: { experiment: 'smart_waiting', enabled: true },
+    });
+    await readLine(client);
+
+    // Get all states
+    writeLine(client, {
+      jsonrpc: '2.0',
+      id: 'get-1',
+      method: 'experiments.get',
+      params: {},
+    });
+
+    const response = await readLine(client);
+    expect(response.id).toBe('get-1');
+    expect(response.result.experiments.smart_waiting).toBe(true);
+    expect(response.result.experiments.page_diffing).toBe(false);
+
+    client.end();
+  });
+
+  it('handles experiments.getOne', async () => {
+    await ipc.start();
+    const client = await connectToSocket(sockPath);
+
+    writeLine(client, { type: 'session_register', sessionId: 'exp-one' });
+    await readLine(client);
+
+    writeLine(client, {
+      jsonrpc: '2.0',
+      id: 'one-1',
+      method: 'experiments.getOne',
+      params: { experiment: 'page_diffing' },
+    });
+
+    const response = await readLine(client);
+    expect(response.id).toBe('one-1');
+    expect(response.result.experiment).toBe('page_diffing');
+    expect(response.result.enabled).toBe(false);
+
+    client.end();
+  });
+
+  it('returns error for unknown experiment in toggle', async () => {
+    await ipc.start();
+    const client = await connectToSocket(sockPath);
+
+    writeLine(client, { type: 'session_register', sessionId: 'exp-err' });
+    await readLine(client);
+
+    writeLine(client, {
+      jsonrpc: '2.0',
+      id: 'err-1',
+      method: 'experiments.toggle',
+      params: { experiment: 'warp_drive', enabled: true },
+    });
+
+    const response = await readLine(client);
+    expect(response.id).toBe('err-1');
+    expect(response.error).toBeDefined();
+    expect(response.error.message).toContain('Unknown experiment');
+
+    client.end();
+  });
+
+  it('cleans up experiment state on session disconnect', async () => {
+    await ipc.start();
+    const client = await connectToSocket(sockPath);
+
+    writeLine(client, { type: 'session_register', sessionId: 'exp-cleanup' });
+    await readLine(client);
+
+    // Enable an experiment
+    writeLine(client, {
+      jsonrpc: '2.0',
+      id: 'c-1',
+      method: 'experiments.toggle',
+      params: { experiment: 'page_diffing', enabled: true },
+    });
+    await readLine(client);
+
+    expect(experiments.isEnabled('exp-cleanup', 'page_diffing')).toBe(true);
+
+    // Disconnect
+    client.end();
+    await new Promise(r => setTimeout(r, 50));
+
+    // After disconnect, isEnabled falls back to defaults (false)
+    expect(experiments.isEnabled('exp-cleanup', 'page_diffing')).toBe(false);
+  });
+
+  // ── daemon_status query ─────────────────────────────────────
+
+  it('responds to daemon_status without handshake', async () => {
+    await ipc.start();
+    const client = await connectToSocket(sockPath);
+
+    writeLine(client, { type: 'daemon_status' });
+    const response = await readLine(client);
+
+    expect(response.type).toBe('daemon_status');
+    expect(response.version).toBeDefined();
+    expect(response.uptimeSeconds).toBeGreaterThanOrEqual(0);
+    expect(response.port).toBe(5555);
+    expect(response.extensionConnected).toBe(true); // mock bridge
+    expect(response.sessions).toEqual([]);
+    expect(response.schedulerQueueDepth).toBe(0);
+
+    client.end();
+  });
+
+  it('daemon_status includes connected sessions', async () => {
+    await ipc.start();
+
+    // Register a session first
+    const session = await connectToSocket(sockPath);
+    writeLine(session, { type: 'session_register', sessionId: 'status-test' });
+    await readLine(session);
+
+    // Query status from a separate connection
+    const query = await connectToSocket(sockPath);
+    writeLine(query, { type: 'daemon_status' });
+    const response = await readLine(query);
+
+    expect(response.sessions).toHaveLength(1);
+    expect(response.sessions[0].sessionId).toBe('status-test');
+    expect(response.sessions[0].ownedTabCount).toBe(0);
+
+    session.end();
+    query.end();
+  });
+
+  it('isolates experiment state between sessions', async () => {
+    await ipc.start();
+
+    const client1 = await connectToSocket(sockPath);
+    const client2 = await connectToSocket(sockPath);
+
+    writeLine(client1, { type: 'session_register', sessionId: 'iso-a' });
+    writeLine(client2, { type: 'session_register', sessionId: 'iso-b' });
+    await readLine(client1);
+    await readLine(client2);
+
+    // Enable page_diffing for session A only
+    writeLine(client1, {
+      jsonrpc: '2.0',
+      id: 'iso-1',
+      method: 'experiments.toggle',
+      params: { experiment: 'page_diffing', enabled: true },
+    });
+    await readLine(client1);
+
+    expect(experiments.isEnabled('iso-a', 'page_diffing')).toBe(true);
+    expect(experiments.isEnabled('iso-b', 'page_diffing')).toBe(false);
 
     client1.end();
     client2.end();

@@ -226,6 +226,15 @@ export class RequestScheduler {
     }
   }
 
+  /** Return total number of queued requests across all sessions. */
+  getQueueDepth(): number {
+    let count = 0;
+    for (const queue of this.requestQueue.values()) {
+      count += queue.length;
+    }
+    return count;
+  }
+
   /** Drain and reject all queued requests. Called during shutdown. */
   drainAll(): void {
     for (const [, queue] of this.requestQueue) {

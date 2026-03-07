@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { parseArgs, formatUptime } from '../src/main';
 
 // Test the exported utility functions from main.ts without running the entry point
-// We test parseArgs and isProcessAlive, PID file lifecycle
 
 describe('Daemon main utilities', () => {
   const tmpDir = path.join(os.tmpdir(), 'daemon-main-test');
@@ -90,6 +90,57 @@ describe('Daemon main utilities', () => {
       // Should clean it
       fs.unlinkSync(sockFile);
       expect(fs.existsSync(sockFile)).toBe(false);
+    });
+  });
+
+  describe('parseArgs', () => {
+    it('parses status command', () => {
+      const args = parseArgs(['node', 'daemon', 'status']);
+      expect(args.command).toBe('status');
+      expect(args.verbose).toBe(false);
+    });
+
+    it('parses status --verbose', () => {
+      const args = parseArgs(['node', 'daemon', 'status', '--verbose']);
+      expect(args.command).toBe('status');
+      expect(args.verbose).toBe(true);
+    });
+
+    it('parses observe command', () => {
+      const args = parseArgs(['node', 'daemon', 'observe']);
+      expect(args.command).toBe('observe');
+    });
+
+    it('parses --debug flag', () => {
+      const args = parseArgs(['node', 'daemon', '--debug']);
+      expect(args.debug).toBe(true);
+    });
+
+    it('parses --port flag', () => {
+      const args = parseArgs(['node', 'daemon', '--port', '9999']);
+      expect(args.port).toBe(9999);
+    });
+
+    it('defaults to port 5555', () => {
+      const args = parseArgs(['node', 'daemon']);
+      expect(args.port).toBe(5555);
+      expect(args.debug).toBe(false);
+      expect(args.verbose).toBe(false);
+      expect(args.command).toBeUndefined();
+    });
+  });
+
+  describe('formatUptime', () => {
+    it('formats seconds', () => {
+      expect(formatUptime(45)).toBe('45s');
+    });
+
+    it('formats minutes and seconds', () => {
+      expect(formatUptime(125)).toBe('2m 5s');
+    });
+
+    it('formats hours and minutes', () => {
+      expect(formatUptime(7920)).toBe('2h 12m');
     });
   });
 

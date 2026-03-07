@@ -52,6 +52,20 @@ chrome.runtime.onInstalled.addListener((details) => {
   // SW is now active on Chrome launch — same effect
 });
 
+// Buffer of recently spawned tabs for click-triggered detection
+const spawnedTabBuffer: Array<{ tab: chrome.tabs.Tab; timestamp: number }> = [];
+const SPAWNED_TAB_TTL = 10_000; // 10s max age
+
+// Register tabs.onCreated at TOP LEVEL for MV3 — buffers new tab events
+chrome.tabs.onCreated.addListener((tab) => {
+  spawnedTabBuffer.push({ tab, timestamp: Date.now() });
+  // Evict stale entries
+  const cutoff = Date.now() - SPAWNED_TAB_TTL;
+  while (spawnedTabBuffer.length > 0 && spawnedTabBuffer[0].timestamp < cutoff) {
+    spawnedTabBuffer.shift();
+  }
+});
+
 // Register tabs.onUpdated at TOP LEVEL for MV3 persistence
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!tabHandlers) return;
@@ -580,6 +594,34 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     });
 
     return results?.[0]?.result || { success: false, error: 'Script execution failed' };
+  });
+
+  // drainSpawnedTabs — returns and clears tabs created since a given timestamp
+  wsConnection.registerCommandHandler('drainSpawnedTabs', async (params) => {
+    const since = params?.since || 0;
+    const attachedTabId = tabHandlers.getAttachedTabId();
+
+    const spawned: any[] = [];
+    const remaining: typeof spawnedTabBuffer = [];
+    for (const entry of spawnedTabBuffer) {
+      if (entry.timestamp >= since && entry.tab.id !== attachedTabId) {
+        spawned.push({
+          id: entry.tab.id,
+          index: entry.tab.index,
+          url: entry.tab.url || entry.tab.pendingUrl || '',
+          title: entry.tab.title || 'New Tab',
+          openerTabId: entry.tab.openerTabId ?? null,
+        });
+      } else if (entry.timestamp >= since) {
+        remaining.push(entry);
+      }
+      // entries older than `since` are implicitly dropped
+    }
+
+    spawnedTabBuffer.length = 0;
+    spawnedTabBuffer.push(...remaining);
+
+    return { tabs: spawned };
   });
 
   // ── Experimental feature handlers ──

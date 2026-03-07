@@ -233,7 +233,7 @@ export class ExtensionServer implements IExtensionTransport {
    */
   async sendCmd(method: string, params: Record<string, unknown> = {}, timeout: number = 60000): Promise<any> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('Extension not connected. Open the extension popup and click "Enable".');
+      throw new Error('Extension not connected. Run `npx supersurf-daemon status` to diagnose, then check the extension popup in Chrome.');
     }
 
     const id = crypto.randomUUID().slice(0, 8);

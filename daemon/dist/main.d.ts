@@ -7,6 +7,7 @@
  *
  * Usage:
  *   supersurf-daemon [--port <n>] [--debug]
+ *   supersurf-daemon status
  *
  * Files:
  *   ~/.supersurf/daemon.pid   — PID file for process detection
@@ -22,10 +23,18 @@ declare const IDLE_TIMEOUT_MS: number;
 declare function parseArgs(argv: string[]): {
     port: number;
     debug: boolean;
+    verbose: boolean;
+    command?: string;
 };
+/** Format uptime seconds into human-readable string. */
+declare function formatUptime(seconds: number): string;
+/** Read package version from package.json */
+declare function getVersion(): string;
+declare function printStatus(verbose: boolean): Promise<void>;
+declare function observe(): void;
 /** Check if a process with the given PID is alive. */
 declare function isProcessAlive(pid: number): boolean;
 /** Clean stale PID/socket files if the referenced process is dead. */
 declare function cleanStaleFiles(): void;
-export { parseArgs, isProcessAlive, cleanStaleFiles, SUPERSURF_DIR, PID_FILE, SOCK_FILE, IDLE_TIMEOUT_MS };
+export { parseArgs, isProcessAlive, cleanStaleFiles, printStatus, observe, formatUptime, getVersion, SUPERSURF_DIR, PID_FILE, SOCK_FILE, IDLE_TIMEOUT_MS };
 //# sourceMappingURL=main.d.ts.map

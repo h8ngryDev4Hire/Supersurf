@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Import directly — no mocks needed for pure logic modules
 import {
@@ -103,6 +103,130 @@ describe('applyInitialState()', () => {
   it('does nothing when no config', () => {
     applyInitialState({});
     expect(experimentRegistry.isEnabled('page_diffing')).toBe(false);
+  });
+});
+
+// ── IPC Proxy Behavior ──────────────────────────────────────────
+
+function mockTransport() {
+  return {
+    sendCmd: vi.fn().mockResolvedValue({ success: true }),
+    connected: true,
+    browser: 'chrome',
+    buildTime: null,
+    onReconnect: null,
+    onTabInfoUpdate: null,
+    notifyClientId: vi.fn(),
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
+  } as any;
+}
+
+describe('ExperimentRegistry (IPC proxy)', () => {
+  beforeEach(() => {
+    experimentRegistry.unbind();
+  });
+
+  describe('bind / unbind', () => {
+    it('unbind clears the cache', () => {
+      experimentRegistry.enable('page_diffing');
+      expect(experimentRegistry.isEnabled('page_diffing')).toBe(true);
+
+      experimentRegistry.unbind();
+      expect(experimentRegistry.isEnabled('page_diffing')).toBe(false);
+    });
+  });
+
+  describe('toggle()', () => {
+    it('sends experiments.toggle IPC to daemon', async () => {
+      const transport = mockTransport();
+      experimentRegistry.bind(transport);
+
+      await experimentRegistry.toggle('page_diffing', true);
+
+      expect(transport.sendCmd).toHaveBeenCalledWith(
+        'experiments.toggle',
+        { experiment: 'page_diffing', enabled: true },
+        5000,
+      );
+    });
+
+    it('updates local cache after IPC', async () => {
+      const transport = mockTransport();
+      experimentRegistry.bind(transport);
+
+      await experimentRegistry.toggle('smart_waiting', true);
+      expect(experimentRegistry.isEnabled('smart_waiting')).toBe(true);
+
+      await experimentRegistry.toggle('smart_waiting', false);
+      expect(experimentRegistry.isEnabled('smart_waiting')).toBe(false);
+    });
+
+    it('throws on unknown experiment', async () => {
+      experimentRegistry.bind(mockTransport());
+      await expect(experimentRegistry.toggle('warp_drive', true)).rejects.toThrow('Unknown experiment');
+    });
+  });
+
+  describe('enable() with transport', () => {
+    it('fire-and-forget IPCs to daemon', () => {
+      const transport = mockTransport();
+      experimentRegistry.bind(transport);
+
+      experimentRegistry.enable('page_diffing');
+
+      expect(transport.sendCmd).toHaveBeenCalledWith(
+        'experiments.toggle',
+        { experiment: 'page_diffing', enabled: true },
+        5000,
+      );
+      expect(experimentRegistry.isEnabled('page_diffing')).toBe(true);
+    });
+  });
+
+  describe('disable() with transport', () => {
+    it('fire-and-forget IPCs to daemon', () => {
+      const transport = mockTransport();
+      experimentRegistry.bind(transport);
+
+      experimentRegistry.enable('page_diffing');
+      experimentRegistry.disable('page_diffing');
+
+      expect(transport.sendCmd).toHaveBeenCalledWith(
+        'experiments.toggle',
+        { experiment: 'page_diffing', enabled: false },
+        5000,
+      );
+      expect(experimentRegistry.isEnabled('page_diffing')).toBe(false);
+    });
+  });
+
+  describe('isEnabled() reads from cache, not IPC', () => {
+    it('does not call sendCmd', () => {
+      const transport = mockTransport();
+      experimentRegistry.bind(transport);
+      experimentRegistry.enable('page_diffing');
+
+      transport.sendCmd.mockClear();
+      experimentRegistry.isEnabled('page_diffing');
+
+      expect(transport.sendCmd).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('works without transport bound', () => {
+    it('enable/disable work as local-only cache', () => {
+      experimentRegistry.enable('page_diffing');
+      expect(experimentRegistry.isEnabled('page_diffing')).toBe(true);
+
+      experimentRegistry.disable('page_diffing');
+      expect(experimentRegistry.isEnabled('page_diffing')).toBe(false);
+    });
+
+    it('toggle works without transport', async () => {
+      await experimentRegistry.toggle('page_diffing', true);
+      expect(experimentRegistry.isEnabled('page_diffing')).toBe(true);
+    });
   });
 });
 

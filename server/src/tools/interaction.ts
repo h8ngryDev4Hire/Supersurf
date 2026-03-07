@@ -19,6 +19,24 @@ import { createLog } from '../logger';
 
 const log = createLog('[Interact]');
 
+/**
+ * Detect tabs spawned by a click action (window.open, target="_blank", etc.).
+ * Non-blocking — errors are swallowed so the click response always succeeds.
+ */
+async function detectSpawnedTabs(ctx: ToolContext, since: number): Promise<string | null> {
+  try {
+    await ctx.sleep(300);
+    const result = await ctx.ext.sendCmd('drainSpawnedTabs', { since }, 3000);
+    if (result?.tabs?.length > 0) {
+      const lines = result.tabs.map((t: any) =>
+        `  → Tab #${t.index}: ${t.url || 'about:blank'}${t.title ? ` ("${t.title}")` : ''}`
+      );
+      return `New tab(s) opened:\n${lines.join('\n')}\nUse browser_tabs action='attach' index=N to switch.`;
+    }
+  } catch { /* non-blocking */ }
+  return null;
+}
+
 /** Maps friendly key names to CDP Input.dispatchKeyEvent parameters. */
 const KEY_MAP: Record<string, { key: string; code: string; keyCode: number; text: string }> = {
   Enter:      { key: 'Enter',      code: 'Enter',      keyCode: 13, text: '\r' },
@@ -123,6 +141,7 @@ async function moveCursorTo(ctx: ToolContext, x: number, y: number, sessionId: s
 async function executeAction(ctx: ToolContext, action: any): Promise<string> {
   switch (action.type) {
     case 'click': {
+      const clickTimestamp = Date.now();
       let x: number, y: number;
       if (action.selector) {
         ({ x, y } = await ctx.getElementCenter(action.selector));
@@ -157,7 +176,13 @@ async function executeAction(ctx: ToolContext, action: any): Promise<string> {
         catch { /* non-blocking — click may not trigger navigation */ }
       }
 
-      return `Clicked ${action.selector ?? `(${x}, ${y})`} at (${x}, ${y})`;
+      // Detect tab spawns triggered by the click
+      const clickLabel = action.selector ?? `(${x}, ${y})`;
+      const spawned = await detectSpawnedTabs(ctx, clickTimestamp);
+      if (spawned) {
+        return `Clicked ${clickLabel} at (${x}, ${y})\n${spawned}`;
+      }
+      return `Clicked ${clickLabel} at (${x}, ${y})`;
     }
 
     case 'type': {
@@ -245,6 +270,7 @@ async function executeAction(ctx: ToolContext, action: any): Promise<string> {
     }
 
     case 'mouse_click': {
+      const mcClickTimestamp = Date.now();
       const button = action.button || 'left';
       const clickCount = action.clickCount || 1;
       await moveCursorTo(ctx, action.x, action.y, '_default');
@@ -268,6 +294,11 @@ async function executeAction(ctx: ToolContext, action: any): Promise<string> {
         catch { /* non-blocking — click may not trigger navigation */ }
       }
 
+      // Detect tab spawns triggered by the click
+      const mcSpawned = await detectSpawnedTabs(ctx, mcClickTimestamp);
+      if (mcSpawned) {
+        return `Clicked at (${action.x}, ${action.y})\n${mcSpawned}`;
+      }
       return `Clicked at (${action.x}, ${action.y})`;
     }
 

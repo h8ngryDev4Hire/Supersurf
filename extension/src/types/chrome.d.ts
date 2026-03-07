@@ -48,6 +48,8 @@ declare namespace chrome {
       index: number;
       title?: string;
       url?: string;
+      pendingUrl?: string;
+      openerTabId?: number;
       windowId: number;
       active: boolean;
       groupId: number; // -1 when ungrouped
@@ -66,6 +68,9 @@ declare namespace chrome {
     };
     const onRemoved: {
       addListener(callback: (tabId: number, removeInfo: any) => void): void;
+    };
+    const onCreated: {
+      addListener(callback: (tab: Tab) => void): void;
     };
     const onUpdated: {
       addListener(callback: (tabId: number, changeInfo: any, tab: Tab) => void): void;

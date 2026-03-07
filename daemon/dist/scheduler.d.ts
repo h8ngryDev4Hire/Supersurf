@@ -42,6 +42,8 @@ export declare class RequestScheduler {
      * 5. Track ownership changes
      */
     private executeRequest;
+    /** Return total number of queued requests across all sessions. */
+    getQueueDepth(): number;
     /** Drain and reject all queued requests. Called during shutdown. */
     drainAll(): void;
 }

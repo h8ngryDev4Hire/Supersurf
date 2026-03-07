@@ -208,6 +208,14 @@ class RequestScheduler {
             reject(error);
         }
     }
+    /** Return total number of queued requests across all sessions. */
+    getQueueDepth() {
+        let count = 0;
+        for (const queue of this.requestQueue.values()) {
+            count += queue.length;
+        }
+        return count;
+    }
     /** Drain and reject all queued requests. Called during shutdown. */
     drainAll() {
         for (const [, queue] of this.requestQueue) {

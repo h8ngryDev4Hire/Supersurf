@@ -85,9 +85,12 @@ export function getToolSchemas(): ToolSchema[] {
                     'mouse_move', 'mouse_click', 'scroll_to', 'scroll_by',
                     'scroll_into_view', 'select_option', 'file_upload', 'force_pseudo_state',
                   ],
-                  description: 'Type of interaction',
+                  description:
+                    'Type of interaction. ' +
+                    'wait: if selector is provided, polls for the element every 100ms and resolves immediately when found (rejects on timeout). ' +
+                    'If only timeout is provided, pauses for that fixed duration.',
                 },
-                selector: { type: 'string', description: 'CSS selector for the target element' },
+                selector: { type: 'string', description: 'CSS selector for the target element. For wait: element to poll for existence.' },
                 text: { type: 'string', description: 'Text to type (for type action)' },
                 key: { type: 'string', description: 'Key to press (for press_key action)' },
                 value: { type: 'string', description: 'Option value or text (for select_option)' },
@@ -101,7 +104,7 @@ export function getToolSchemas(): ToolSchema[] {
                 y: { type: 'number', description: 'Y coordinate in viewport pixels' },
                 button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button' },
                 clickCount: { type: 'number', description: 'Number of clicks (default: 1)' },
-                timeout: { type: 'number', description: 'Timeout in ms (for wait action)' },
+                timeout: { type: 'number', description: 'Timeout in ms (for wait action). With selector: max wait before rejecting. Without selector: fixed delay. Default: 30000ms.' },
               },
               required: ['type'],
             },

@@ -1,12 +1,10 @@
 /**
- * ExperimentRegistry — session-scoped feature flag registry for experimental features.
+ * ExperimentRegistry — cache-backed IPC proxy for experiment state.
  *
- * Manages the lifecycle of toggleable experiments (page_diffing, smart_waiting,
- * storage_inspection, mouse_humanization, secure_eval). Experiments are toggled
- * per-session via the `experimental_features` MCP tool.
- *
- * Also serves as the dispatch layer for experimental tools — collects schemas
- * and routes tool calls to their respective handlers.
+ * The daemon owns experiment state. This registry caches enabled/disabled
+ * flags locally for synchronous reads (isEnabled) and IPCs toggle operations
+ * to the daemon. Processing logic (page diffing, AST analysis, waypoint
+ * generation) remains server-side.
  *
  * @module experimental/index
  *
@@ -23,6 +21,7 @@ export { analyzeCode, wrapWithPageProxy } from './secure-eval';
 export type { AnalysisResult } from './secure-eval';
 
 import type { ToolSchema, ToolContext } from '../tools/types';
+import type { IExtensionTransport } from '../bridge';
 import { storageInspectionSchema, onBrowserStorage } from './storage-inspection';
 
 /** All recognized session-toggleable experiment names. */
@@ -30,39 +29,78 @@ const AVAILABLE_EXPERIMENTS = ['page_diffing', 'smart_waiting', 'storage_inspect
 type ExperimentName = typeof AVAILABLE_EXPERIMENTS[number];
 
 /**
- * Session-scoped feature flag registry.
+ * Cache-backed IPC proxy for experiment state.
  *
- * Tracks which experiments are currently enabled. Validation ensures only
- * recognized experiment names can be toggled — unknown names throw immediately
- * to surface typos at the call site.
+ * Reads are synchronous (from local cache). Writes IPC to the daemon and
+ * update the cache on success. The ~20 isEnabled() call sites in tools/
+ * remain unchanged — same sync signature, same behavior.
  */
 class ExperimentRegistry {
-  private _enabled: Map<string, boolean> = new Map();
+  private _cache: Map<string, boolean> = new Map();
+  private _transport: IExtensionTransport | null = null;
 
-  /** Enable an experiment. Throws if the name is not in AVAILABLE_EXPERIMENTS. */
+  /** Bind to a daemon transport. Called on connect. */
+  bind(transport: IExtensionTransport): void {
+    this._transport = transport;
+  }
+
+  /** Unbind transport and clear cache. Called on disconnect. */
+  unbind(): void {
+    this._transport = null;
+    this._cache.clear();
+  }
+
+  /**
+   * Toggle an experiment. IPCs to daemon, then updates local cache.
+   * Use this from the experimental_features handler (async context).
+   */
+  async toggle(feature: string, enabled: boolean): Promise<void> {
+    if (!this.isAvailable(feature)) {
+      throw new Error(`Unknown experiment: "${feature}". Available: ${AVAILABLE_EXPERIMENTS.join(', ')}`);
+    }
+
+    if (this._transport && this._transport.connected) {
+      await this._transport.sendCmd('experiments.toggle', { experiment: feature, enabled }, 5000);
+    }
+    this._cache.set(feature, enabled);
+  }
+
+  /**
+   * Enable an experiment. Fire-and-forget IPC for backwards compat with applyInitialState.
+   * Throws if the name is not in AVAILABLE_EXPERIMENTS.
+   */
   enable(feature: string): void {
     if (!this.isAvailable(feature)) {
       throw new Error(`Unknown experiment: "${feature}". Available: ${AVAILABLE_EXPERIMENTS.join(', ')}`);
     }
-    this._enabled.set(feature, true);
+    if (this._transport && this._transport.connected) {
+      this._transport.sendCmd('experiments.toggle', { experiment: feature, enabled: true }, 5000).catch(() => {});
+    }
+    this._cache.set(feature, true);
   }
 
-  /** Disable an experiment. Throws if the name is not in AVAILABLE_EXPERIMENTS. */
+  /**
+   * Disable an experiment. Fire-and-forget IPC for backwards compat.
+   * Throws if the name is not in AVAILABLE_EXPERIMENTS.
+   */
   disable(feature: string): void {
     if (!this.isAvailable(feature)) {
       throw new Error(`Unknown experiment: "${feature}". Available: ${AVAILABLE_EXPERIMENTS.join(', ')}`);
     }
-    this._enabled.set(feature, false);
+    if (this._transport && this._transport.connected) {
+      this._transport.sendCmd('experiments.toggle', { experiment: feature, enabled: false }, 5000).catch(() => {});
+    }
+    this._cache.set(feature, false);
   }
 
-  /** Returns true only if the experiment has been explicitly enabled. */
+  /** Returns true only if the experiment is enabled in the local cache. Sync — no IPC. */
   isEnabled(feature: string): boolean {
-    return this._enabled.get(feature) === true;
+    return this._cache.get(feature) === true;
   }
 
-  /** Clear all experiment states (used in tests and session teardown). */
+  /** Clear local cache. Daemon handles session cleanup on disconnect. */
   reset(): void {
-    this._enabled.clear();
+    this._cache.clear();
   }
 
   /** Return a copy of all recognized experiment names. */
@@ -70,7 +108,7 @@ class ExperimentRegistry {
     return [...AVAILABLE_EXPERIMENTS];
   }
 
-  /** Return a snapshot of all experiments and their current enabled/disabled state. */
+  /** Return a snapshot of all experiments and their current cached state. */
   getStates(): Record<string, boolean> {
     const states: Record<string, boolean> = {};
     for (const exp of AVAILABLE_EXPERIMENTS) {
@@ -90,6 +128,7 @@ export const experimentRegistry = new ExperimentRegistry();
 /**
  * Pre-enable session features listed in the env var config.
  * Silently skips feature names that aren't in AVAILABLE_EXPERIMENTS.
+ * Fire-and-forget IPCs to daemon for each enabled experiment.
  */
 export function applyInitialState(config: { enabledExperiments?: string[] }): void {
   if (!config.enabledExperiments) return;

@@ -134,6 +134,9 @@ export async function onConnect(
       }
     };
 
+    // Bind experiment registry to daemon transport
+    experimentRegistry.bind(client);
+
     const BB = await getBrowserBridge();
     mgr.bridge = new BB(mgr.config, mgr.extensionServer);
     await mgr.bridge.initialize(mgr.server, mgr.clientInfo, mgr);
@@ -141,7 +144,7 @@ export async function onConnect(
     mgr.state = 'active';
     mgr.connectedBrowserName = client.browser;
 
-    // Pre-enable session features from env var
+    // Pre-enable session features from env var (fire-and-forget IPC to daemon)
     applyInitialState(mgr.config);
 
     // Notify MCP client that tool list changed
@@ -254,7 +257,7 @@ export async function onDisconnect(
   mgr.connectedBrowserName = null;
   mgr.attachedTab = null;
   destroyHumanization('_default');
-  experimentRegistry.reset();
+  experimentRegistry.unbind();
 
   mgr.notifyToolsListChanged().catch((err: any) =>
     log('Error sending notification:', err)
@@ -363,20 +366,19 @@ export async function onExperimentalFeatures(
 
   for (const key of keys) {
     const value = args[key];
-    if (value === true) {
-      experimentRegistry.enable(key);
+    if (typeof value === 'boolean') {
+      await experimentRegistry.toggle(key, value);
       if (key === 'mouse_humanization') {
-        initHumanization('_default');
-        if (mgr.extensionServer) {
-          mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: true }).catch(() => {});
-        }
-      }
-    } else if (value === false) {
-      experimentRegistry.disable(key);
-      if (key === 'mouse_humanization') {
-        destroyHumanization('_default');
-        if (mgr.extensionServer) {
-          mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: false }).catch(() => {});
+        if (value) {
+          initHumanization('_default');
+          if (mgr.extensionServer) {
+            mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: true }).catch(() => {});
+          }
+        } else {
+          destroyHumanization('_default');
+          if (mgr.extensionServer) {
+            mgr.extensionServer.sendCmd('setHumanizationConfig', { enabled: false }).catch(() => {});
+          }
         }
       }
     }

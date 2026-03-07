@@ -17,6 +17,8 @@ import type { FileLogger } from 'shared';
 import type { ExtensionBridge } from './extension-bridge';
 import type { SessionRegistry } from './session';
 import type { RequestScheduler } from './scheduler';
+import type { DaemonExperimentRegistry } from './experiments/index';
+import { isExperimentMethod } from './experiments/types';
 
 const debugLog = (...args: unknown[]) => {
   const logger = (global as any).DAEMON_LOGGER as FileLogger | undefined;
@@ -26,6 +28,12 @@ const debugLog = (...args: unknown[]) => {
 
 /** Callback invoked when the number of sessions changes (for idle timeout management). */
 export type SessionCountCallback = (count: number) => void;
+
+/** Metadata passed from main to IPCServer for status queries. */
+export interface IPCServerMeta {
+  port: number;
+  version: string;
+}
 
 /**
  * Unix domain socket server for MCP session connections.
@@ -37,18 +45,25 @@ export class IPCServer {
   private bridge: ExtensionBridge;
   private sessions: SessionRegistry;
   private scheduler: RequestScheduler;
+  private experiments: DaemonExperimentRegistry;
   private onSessionCountChange: SessionCountCallback | null = null;
+  private startedAt: number = Date.now();
+  private meta: IPCServerMeta;
 
   constructor(
     socketPath: string,
     bridge: ExtensionBridge,
     sessions: SessionRegistry,
     scheduler: RequestScheduler,
+    experiments: DaemonExperimentRegistry,
+    meta: IPCServerMeta = { port: 5555, version: 'unknown' },
   ) {
     this.socketPath = socketPath;
     this.bridge = bridge;
     this.sessions = sessions;
     this.scheduler = scheduler;
+    this.experiments = experiments;
+    this.meta = meta;
   }
 
   /** Set a callback for session count changes (used by idle timeout). */
@@ -95,6 +110,13 @@ export class IPCServer {
           const msg = JSON.parse(line);
 
           if (!handshakeComplete) {
+            // Pre-auth status query — no handshake needed
+            if (msg.type === 'daemon_status') {
+              this.sendLine(socket, this.buildStatusResponse());
+              socket.end();
+              return;
+            }
+
             // Expecting session_register handshake
             if (msg.type === 'session_register' && msg.sessionId) {
               sessionId = msg.sessionId;
@@ -153,6 +175,7 @@ export class IPCServer {
         debugLog(`Session disconnected: "${sessionId}"`);
         this.scheduler.removeSession(sessionId);
         this.sessions.remove(sessionId);
+        this.experiments.deleteSession(sessionId);
 
         // Notify extension to ungroup the session's tabs
         this.bridge.sendCmd('sessionDisconnect', { sessionId }, 5000).catch(() => {});
@@ -168,7 +191,7 @@ export class IPCServer {
     });
   }
 
-  /** Route a JSON-RPC 2.0 request into the scheduler. */
+  /** Route a JSON-RPC 2.0 request — experiment methods are handled directly, everything else goes to the scheduler. */
   private async handleRequest(sessionId: string, socket: net.Socket, msg: any): Promise<void> {
     if (msg.jsonrpc !== '2.0' || !msg.method || msg.id === undefined) {
       this.sendLine(socket, {
@@ -176,6 +199,21 @@ export class IPCServer {
         id: msg.id ?? null,
         error: { code: -32600, message: 'Invalid JSON-RPC 2.0 request' },
       });
+      return;
+    }
+
+    // Experiment IPC — handle directly, skip scheduler
+    if (isExperimentMethod(msg.method)) {
+      try {
+        const result = this.handleExperimentRequest(sessionId, msg.method, msg.params || {});
+        this.sendLine(socket, { jsonrpc: '2.0', id: msg.id, result });
+      } catch (error: any) {
+        this.sendLine(socket, {
+          jsonrpc: '2.0',
+          id: msg.id,
+          error: { code: -32000, message: error.message || String(error) },
+        });
+      }
       return;
     }
 
@@ -194,6 +232,58 @@ export class IPCServer {
         error: { code: -32000, message: error.message || String(error) },
       });
     }
+  }
+
+  /** Handle an experiment IPC request directly (no scheduler round-trip). */
+  private handleExperimentRequest(
+    sessionId: string,
+    method: string,
+    params: Record<string, unknown>,
+  ): unknown {
+    switch (method) {
+      case 'experiments.toggle':
+        return {
+          success: true,
+          experiment: params.experiment,
+          enabled: this.experiments.toggle(
+            sessionId,
+            params.experiment as string,
+            params.enabled as boolean,
+          ),
+        };
+      case 'experiments.get':
+        return { experiments: this.experiments.getAll(sessionId) };
+      case 'experiments.getOne':
+        return {
+          experiment: params.experiment,
+          enabled: this.experiments.isEnabled(sessionId, params.experiment as string),
+        };
+      default:
+        throw new Error(`Unknown experiment method: ${method}`);
+    }
+  }
+
+  /** Build a status response from live daemon state. */
+  private buildStatusResponse(): any {
+    const sessions: any[] = [];
+    for (const session of this.sessions.values()) {
+      sessions.push({
+        sessionId: session.sessionId,
+        attachedTabId: session.attachedTabId,
+        ownedTabCount: session.ownedTabs.size,
+      });
+    }
+
+    return {
+      type: 'daemon_status',
+      version: this.meta.version,
+      uptimeSeconds: (Date.now() - this.startedAt) / 1000,
+      port: this.meta.port,
+      extensionConnected: this.bridge.connected,
+      extensionBrowser: this.bridge.browser,
+      sessions,
+      schedulerQueueDepth: this.scheduler.getQueueDepth(),
+    };
   }
 
   /** Write an NDJSON line to a socket. */

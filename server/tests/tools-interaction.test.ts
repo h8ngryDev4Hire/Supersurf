@@ -222,4 +222,68 @@ describe('onInteract()', () => {
     expect(result.actions).toHaveLength(1);
     expect(result.actions[0]).toContain('Pressed Escape');
   });
+
+  // ── Tab spawn detection ──
+
+  it('appends spawned tab info to click response', async () => {
+    (ctx.ext.sendCmd as any).mockImplementation(async (cmd: string, params: any) => {
+      if (cmd === 'drainSpawnedTabs') {
+        return { tabs: [{ id: 42, index: 3, url: 'https://example.com', title: 'Example' }] };
+      }
+      return {};
+    });
+
+    const result = await onInteract(ctx, {
+      actions: [{ type: 'click', selector: '#link' }],
+    }, {});
+
+    expect(result.content[0].text).toContain('New tab(s) opened');
+    expect(result.content[0].text).toContain('https://example.com');
+    expect(result.content[0].text).toContain('Example');
+    expect(result.content[0].text).toContain("browser_tabs action='attach'");
+  });
+
+  it('returns normal click response when no tabs spawned', async () => {
+    (ctx.ext.sendCmd as any).mockImplementation(async (cmd: string) => {
+      if (cmd === 'drainSpawnedTabs') return { tabs: [] };
+      return {};
+    });
+
+    const result = await onInteract(ctx, {
+      actions: [{ type: 'click', x: 100, y: 200 }],
+    }, {});
+
+    expect(result.content[0].text).toContain('Clicked');
+    expect(result.content[0].text).not.toContain('New tab(s) opened');
+  });
+
+  it('click still works when drainSpawnedTabs throws', async () => {
+    (ctx.ext.sendCmd as any).mockImplementation(async (cmd: string) => {
+      if (cmd === 'drainSpawnedTabs') throw new Error('timeout');
+      return {};
+    });
+
+    const result = await onInteract(ctx, {
+      actions: [{ type: 'click', selector: '#btn' }],
+    }, {});
+
+    expect(result.content[0].text).toContain('Clicked');
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('appends spawned tab info to mouse_click response', async () => {
+    (ctx.ext.sendCmd as any).mockImplementation(async (cmd: string) => {
+      if (cmd === 'drainSpawnedTabs') {
+        return { tabs: [{ id: 10, index: 1, url: 'https://new.tab', title: 'New' }] };
+      }
+      return {};
+    });
+
+    const result = await onInteract(ctx, {
+      actions: [{ type: 'mouse_click', x: 50, y: 60 }],
+    }, {});
+
+    expect(result.content[0].text).toContain('New tab(s) opened');
+    expect(result.content[0].text).toContain('https://new.tab');
+  });
 });

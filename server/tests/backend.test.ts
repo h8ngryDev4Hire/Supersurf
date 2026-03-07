@@ -25,8 +25,12 @@ vi.mock('../src/experimental/index', () => ({
     listAvailable: vi.fn().mockReturnValue(['page_diffing', 'smart_waiting']),
     enable: vi.fn(),
     disable: vi.fn(),
+    toggle: vi.fn().mockResolvedValue(undefined),
     reset: vi.fn(),
+    bind: vi.fn(),
+    unbind: vi.fn(),
     getStates: vi.fn().mockReturnValue({ page_diffing: false, smart_waiting: false }),
+    isAvailable: vi.fn().mockImplementation((f: string) => ['page_diffing', 'smart_waiting'].includes(f)),
   },
   applyInitialState: vi.fn(),
 }));
@@ -336,22 +340,22 @@ describe('ConnectionManager', () => {
       expect(result.available).toContain('smart_waiting');
     });
 
-    it('enables experiments', async () => {
+    it('toggles experiments on', async () => {
       const { experimentRegistry } = await import('../src/experimental/index');
       await backend.callTool('experimental_features', { page_diffing: true });
-      expect(experimentRegistry.enable).toHaveBeenCalledWith('page_diffing');
+      expect(experimentRegistry.toggle).toHaveBeenCalledWith('page_diffing', true);
     });
 
-    it('disables experiments', async () => {
+    it('toggles experiments off', async () => {
       const { experimentRegistry } = await import('../src/experimental/index');
       await backend.callTool('experimental_features', { smart_waiting: false });
-      expect(experimentRegistry.disable).toHaveBeenCalledWith('smart_waiting');
+      expect(experimentRegistry.toggle).toHaveBeenCalledWith('smart_waiting', false);
     });
 
     it('ignores unknown experiment names', async () => {
       const { experimentRegistry } = await import('../src/experimental/index');
       await backend.callTool('experimental_features', { unknown_feature: true }, { rawResult: true });
-      expect(experimentRegistry.enable).not.toHaveBeenCalled();
+      expect(experimentRegistry.toggle).not.toHaveBeenCalled();
     });
   });
 

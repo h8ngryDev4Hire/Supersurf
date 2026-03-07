@@ -283,6 +283,7 @@ All WebSocket commands log params and responses. CDP passthrough unwraps to show
 - **Node.js** >= 18
 - **Chrome** or Chromium
 - An **MCP client** (Claude Code, Claude Desktop, etc.)
+- **macOS or Linux** — Windows is not currently supported. [Vote for Windows support](https://github.com/LiquidBuiltIt/Supersurf/issues/1) if you'd like to see it.
 
 ---
 
